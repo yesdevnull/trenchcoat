@@ -30,11 +30,16 @@ jobs:
       - name: Run tests
         run: go test -v -count=1 -race -coverprofile=coverage.out ./...
 
+      - name: Generate coverage HTML
+        run: go tool cover -html=coverage.out -o coverage.html
+
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.go-version }}
-          path: coverage.out
+          path: |
+            coverage.out
+            coverage.html
 
   lint:
     name: Lint

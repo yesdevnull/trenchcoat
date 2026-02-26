@@ -1,3 +1,5 @@
-/trenchcoat
-dist/
+trenchcoat-*
 coverage.out
+coverage.html
+*.test
+dist/
