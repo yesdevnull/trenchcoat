@@ -11,8 +11,18 @@ It ships as a single static binary with no runtime dependencies and also provide
 
 ## Installation
 
+### Latest release
+
 ```sh
 go install github.com/yesdevnull/trenchcoat/cmd/trenchcoat@latest
+```
+
+### Latest dev version
+
+Install the latest commit on the `main` branch:
+
+```sh
+go install github.com/yesdevnull/trenchcoat/cmd/trenchcoat@main
 ```
 
 ## Quick start
