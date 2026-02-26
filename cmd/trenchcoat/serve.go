@@ -13,8 +13,8 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/server"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/server"
 )
 
 func newServeCmd() *cobra.Command {

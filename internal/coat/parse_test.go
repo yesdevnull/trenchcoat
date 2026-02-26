@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
 )
 
 // --- YAML parsing tests ---

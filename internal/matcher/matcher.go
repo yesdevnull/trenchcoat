@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
 )
 
 // uriMatchType defines how a URI pattern is matched.

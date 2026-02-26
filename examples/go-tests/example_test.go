@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat"
+	"github.com/yesdevnull/trenchcoat"
 )
 
 // TestBasicMock demonstrates a simple coat serving a JSON response.

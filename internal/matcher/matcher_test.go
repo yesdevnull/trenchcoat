@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/matcher"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/matcher"
 )
 
 // --- Exact URI matching ---

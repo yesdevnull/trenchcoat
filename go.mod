@@ -1,4 +1,4 @@
-module github.com/yesdevnull/genai-experiments/trenchcoat
+module github.com/yesdevnull/trenchcoat
 
 go 1.25
 

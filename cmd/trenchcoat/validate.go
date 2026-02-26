@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
 )
 
 func newValidateCmd() *cobra.Command {

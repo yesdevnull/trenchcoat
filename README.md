@@ -12,7 +12,7 @@ It ships as a single static binary with no runtime dependencies and also provide
 ## Installation
 
 ```sh
-go install github.com/yesdevnull/genai-experiments/trenchcoat/cmd/trenchcoat@latest
+go install github.com/yesdevnull/trenchcoat/cmd/trenchcoat@latest
 ```
 
 ## Quick start
@@ -194,7 +194,7 @@ coats:
 Trenchcoat provides a Go package for spinning up mock servers directly in test suites. This is particularly useful in Terraform provider acceptance tests or any integration test that needs to mock an upstream HTTP API.
 
 ```sh
-go get github.com/yesdevnull/genai-experiments/trenchcoat
+go get github.com/yesdevnull/trenchcoat
 ```
 
 ### Basic usage

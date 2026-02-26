@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/proxy"
+	"github.com/yesdevnull/trenchcoat/internal/proxy"
 )
 
 func newProxyCmd() *cobra.Command {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/proxy"
+	"github.com/yesdevnull/trenchcoat/internal/proxy"
 )
 
 func TestProxy_ForwardsRequest(t *testing.T) {
