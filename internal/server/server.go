@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/matcher"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/matcher"
 )
 
 // Server is the Trenchcoat mock HTTP server.

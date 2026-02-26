@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/config"
+	"github.com/yesdevnull/trenchcoat/internal/config"
 )
 
 func TestLoad_ExplicitPath(t *testing.T) {

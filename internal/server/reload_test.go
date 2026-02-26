@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/coat"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/server"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/server"
 )
 
 func TestServe_Reload(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/yesdevnull/genai-experiments/trenchcoat/internal/config"
+	"github.com/yesdevnull/trenchcoat/internal/config"
 )
 
 // Version information set at build time via ldflags.
