@@ -119,11 +119,17 @@ func TestProxy_CapturesQueryString(t *testing.T) {
 	_ = resp.Body.Close()
 	p.WaitCaptures()
 
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob capture files: %v", err)
+	}
 	if len(files) == 0 {
 		t.Fatal("expected captured coat file")
 	}
-	content, _ := os.ReadFile(files[0])
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read capture file %s: %v", files[0], err)
+	}
 	if !strings.Contains(string(content), "foo=bar") {
 		t.Fatalf("expected query string in coat, got: %s", content)
 	}
@@ -185,21 +191,33 @@ func TestProxy_Dedupe_Overwrite(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Make same request twice.
-	resp, _ := http.Get(p.URL() + "/test")
+	resp, err := http.Get(p.URL() + "/test")
+	if err != nil {
+		t.Fatalf("failed to perform first GET request: %v", err)
+	}
 	_ = resp.Body.Close()
 	p.WaitCaptures()
 
-	resp2, _ := http.Get(p.URL() + "/test")
+	resp2, err := http.Get(p.URL() + "/test")
+	if err != nil {
+		t.Fatalf("failed to perform second GET request: %v", err)
+	}
 	_ = resp2.Body.Close()
 	p.WaitCaptures()
 
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob capture files: %v", err)
+	}
 	if len(files) != 1 {
 		t.Fatalf("expected exactly 1 file with overwrite dedup, got %d", len(files))
 	}
 
 	// File should have the second response's content.
-	content, _ := os.ReadFile(files[0])
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read capture file %s: %v", files[0], err)
+	}
 	if !strings.Contains(string(content), "response-xx") {
 		t.Fatalf("expected overwritten content from second request, got: %s", content)
 	}

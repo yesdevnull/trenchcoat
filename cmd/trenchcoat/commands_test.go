@@ -73,7 +73,7 @@ func TestValidateCmd_NonExistentFile(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"/no/such/file.yaml"})
+	cmd.SetArgs([]string{filepath.Join(t.TempDir(), "missing.yaml")})
 
 	err := cmd.Execute()
 	if err == nil {
@@ -386,9 +386,10 @@ func TestWatchCoats_NonExistentPaths(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	nonExistent := filepath.Join(t.TempDir(), "does-not-exist")
 	done := make(chan struct{})
 	go func() {
-		watchCoats(ctx, logger, nil, []string{"/no/such/path"})
+		watchCoats(ctx, logger, nil, []string{nonExistent})
 		close(done)
 	}()
 

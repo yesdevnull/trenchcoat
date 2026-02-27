@@ -107,7 +107,8 @@ coats:
 }
 
 func TestLoadPaths_NonExistentPath(t *testing.T) {
-	loaded, errs := LoadPaths([]string{"/no/such/path"})
+	nonExistent := filepath.Join(t.TempDir(), "does-not-exist")
+	loaded, errs := LoadPaths([]string{nonExistent})
 	if len(errs) == 0 {
 		t.Fatal("expected errors for non-existent path")
 	}
