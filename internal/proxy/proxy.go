@@ -99,10 +99,7 @@ func (p *Proxy) Start(addr string) (string, error) {
 		return "", fmt.Errorf("creating write directory %s: %w", p.config.WriteDir, err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", p.handleRequest)
-
-	p.httpServer = &http.Server{Handler: mux}
+	p.httpServer = &http.Server{Handler: http.HandlerFunc(p.handleRequest)}
 
 	ln, err := net.Listen("tcp4", addr)
 	if err != nil {

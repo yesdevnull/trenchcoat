@@ -52,11 +52,8 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 		coats:   loaded,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleRequest)
-
 	s.httpServer = &http.Server{
-		Handler: mux,
+		Handler: http.HandlerFunc(s.handleRequest),
 	}
 
 	return s
