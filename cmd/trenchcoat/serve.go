@@ -1,13 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -86,15 +85,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Set up file watching.
+	ctx := cmd.Context()
 	if watch {
-		go watchCoats(logger, srv, coatPaths)
+		go watchCoats(ctx, logger, srv, coatPaths)
 	}
 
-	// Wait for shutdown signal.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	logger.Info("received signal, shutting down", "signal", sig)
+	// Wait for context cancellation (signal-based in production, explicit in tests).
+	<-ctx.Done()
+	logger.Info("received signal, shutting down", "signal", ctx.Err())
 
 	if err := srv.Shutdown(10 * time.Second); err != nil {
 		return err
@@ -104,7 +102,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func watchCoats(logger *slog.Logger, srv *server.Server, coatPaths []string) {
+func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, coatPaths []string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Error("failed to create file watcher", "error", err)
@@ -133,6 +131,8 @@ func watchCoats(logger *slog.Logger, srv *server.Server, coatPaths []string) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return

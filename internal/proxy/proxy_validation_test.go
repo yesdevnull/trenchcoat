@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,8 +130,13 @@ func TestProxy_CapturesQueryString(t *testing.T) {
 }
 
 func TestProxy_UpstreamUnreachable(t *testing.T) {
+	// Start and immediately close a server to get a deterministically unreachable port.
+	closedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	unreachableURL := closedServer.URL
+	closedServer.Close()
+
 	p, err := proxy.New(proxy.Config{
-		UpstreamURL: "http://127.0.0.1:1", // Port 1 should be unreachable.
+		UpstreamURL: unreachableURL,
 		WriteDir:    t.TempDir(),
 		Dedupe:      "overwrite",
 	})
@@ -238,18 +244,5 @@ func readAllBody(r *http.Request) ([]byte, error) {
 		return nil, nil
 	}
 	defer func() { _ = r.Body.Close() }()
-	var buf strings.Builder
-	_, err := strings.NewReader("").WriteTo(&buf)
-	_ = err
-
-	b := make([]byte, 0, 1024)
-	for {
-		tmp := make([]byte, 512)
-		n, err := r.Body.Read(tmp)
-		b = append(b, tmp[:n]...)
-		if err != nil {
-			break
-		}
-	}
-	return b, nil
+	return io.ReadAll(r.Body)
 }

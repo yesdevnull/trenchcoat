@@ -1,7 +1,7 @@
 # Test Coverage Analysis
 
 Analysis of the Trenchcoat test suite, run with Go 1.25.7 using
-`go test -race -coverprofile`.
+`go test -race -coverprofile=coverage.out ./...`.
 
 ## Current Coverage (after improvements)
 
