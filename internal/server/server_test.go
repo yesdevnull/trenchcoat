@@ -313,6 +313,58 @@ func TestServe_HeaderMatching(t *testing.T) {
 	assertEqual(t, "status", 404, resp2.StatusCode)
 }
 
+// --- Double-slash (protocol-in-path) tests ---
+
+func TestServe_DoubleSlashInPath(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "protocol-in-path",
+				Request:  coat.Request{Method: "GET", URI: "/Path/To/Json/swis://Hostname/Another/Thing"},
+				Response: &coat.Response{Code: 200, Body: "matched"},
+			},
+		},
+	})
+
+	// Build request manually to preserve the double slash.
+	req, err := http.NewRequest("GET", srv.URL()+"/Path/To/Json/swis://Hostname/Another/Thing", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	// Override the parsed URL to preserve the double slash in the path.
+	req.URL.Opaque = "/Path/To/Json/swis://Hostname/Another/Thing"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", "matched", readBody(t, resp))
+}
+
+func TestServe_DoubleSlashInPath_404Response(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "protocol-in-path",
+				Request:  coat.Request{Method: "GET", URI: "/Path/To/Json/swis://Hostname/Another/Thing"},
+				Response: &coat.Response{Code: 200, Body: "matched"},
+			},
+		},
+	})
+
+	// Request with single slash — should NOT match coat with double slash.
+	resp, err := http.Get(srv.URL() + "/Path/To/Json/swis:/Hostname/Another/Thing")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	assertEqual(t, "status", 404, resp.StatusCode)
+}
+
 // --- Sequence tests ---
 
 func TestServe_Sequence_Cycle(t *testing.T) {

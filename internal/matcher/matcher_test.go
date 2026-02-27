@@ -464,6 +464,62 @@ func TestMatch_Precedence_FileOrderTieBreaker(t *testing.T) {
 	assertEqual(t, "name", "first", result.Name)
 }
 
+// --- Double-slash (protocol-in-path) URI matching ---
+
+func TestMatch_ExactURI_DoubleSlash(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "protocol-in-path",
+			Request:  coat.Request{Method: "GET", URI: "/Path/To/Json/swis://Hostname/Another/Thing"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/Path/To/Json/swis://Hostname/Another/Thing", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match for URI containing double slashes")
+	}
+	assertEqual(t, "name", "protocol-in-path", result.Name)
+}
+
+func TestMatch_ExactURI_DoubleSlash_NoMatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "protocol-in-path",
+			Request:  coat.Request{Method: "GET", URI: "/Path/To/Json/swis://Hostname/Another/Thing"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	// A request with single slash should NOT match a coat with double slash.
+	req := newRequest(t, "GET", "/Path/To/Json/swis:/Hostname/Another/Thing", nil)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match — single slash should not match double-slash coat")
+	}
+}
+
+func TestMatch_RegexURI_DoubleSlash(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "regex-protocol",
+			Request:  coat.Request{Method: "GET", URI: `~/Path/To/Json/swis://[^/]+/.*`},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/Path/To/Json/swis://Hostname/Another/Thing", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected regex match for URI containing double slashes")
+	}
+	assertEqual(t, "name", "regex-protocol", result.Name)
+}
+
 // --- Helpers ---
 
 func newRequest(t *testing.T, method, uri string, headers map[string]string) *http.Request {
