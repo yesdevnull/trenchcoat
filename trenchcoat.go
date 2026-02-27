@@ -18,8 +18,7 @@
 //	            },
 //	        }),
 //	    )
-//	    srv.Start(t)
-//	    defer srv.Stop()
+//	    srv.Start(t) // registers t.Cleanup to stop the server
 //
 //	    resp, err := http.Get(srv.URL + "/api/v1/users")
 //	    // ... assert response ...
