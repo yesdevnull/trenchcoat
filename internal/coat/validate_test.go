@@ -2,6 +2,7 @@ package coat
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,7 @@ func TestParseJSON_MalformedSyntax(t *testing.T) {
 }
 
 func TestParseFile_NonExistent(t *testing.T) {
-	_, err := ParseFile("/no/such/file.yaml")
+	_, err := ParseFile(filepath.Join(t.TempDir(), "missing.yaml"))
 	if err == nil {
 		t.Fatal("expected error for non-existent file")
 	}
@@ -91,7 +92,7 @@ func TestParseFile_NonExistent(t *testing.T) {
 }
 
 func TestParseFile_NonExistentJSON(t *testing.T) {
-	_, err := ParseFile("/no/such/file.json")
+	_, err := ParseFile(filepath.Join(t.TempDir(), "missing.json"))
 	if err == nil {
 		t.Fatal("expected error for non-existent JSON file")
 	}
