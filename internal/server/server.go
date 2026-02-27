@@ -2,7 +2,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -69,7 +71,7 @@ func (s *Server) Start(addr string) (string, error) {
 	s.listener = ln
 
 	go func() {
-		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("server error", "error", err)
 		}
 	}()
@@ -86,7 +88,7 @@ func (s *Server) StartTLS(addr, certFile, keyFile string) (string, error) {
 	s.listener = ln
 
 	go func() {
-		if err := s.httpServer.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.ServeTLS(ln, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("TLS server error", "error", err)
 		}
 	}()
@@ -114,7 +116,7 @@ func (s *Server) TLSUrl() string {
 
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(timeout time.Duration) error {
-	ctx, cancel := contextWithTimeout(timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return s.httpServer.Shutdown(ctx)
 }
@@ -240,7 +242,7 @@ func (s *Server) logRequest(r *http.Request, coatName string, status int, start 
 		"matched", matched,
 		"coat", coatName,
 		"status", status,
-		"duration", time.Since(start).String(),
+		"duration", time.Since(start),
 	)
 }
 
