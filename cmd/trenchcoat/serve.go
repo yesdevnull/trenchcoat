@@ -92,7 +92,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Wait for context cancellation (signal-based in production, explicit in tests).
 	<-ctx.Done()
-	logger.Info("received signal, shutting down", "signal", ctx.Err())
+	logger.Info("context canceled, shutting down", "reason", ctx.Err())
 
 	if err := srv.Shutdown(10 * time.Second); err != nil {
 		return err
