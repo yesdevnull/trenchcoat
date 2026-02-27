@@ -34,7 +34,7 @@ trenchcoat.go       Public API package for Go test integration
 ### Requirements
 
 - Go 1.25+ (latest: 1.25.7)
-- golangci-lint v2.5.0+
+- golangci-lint v2.10.1+
 
 ### Installing Go
 
@@ -187,7 +187,7 @@ defer srv.Stop()
 
 GitHub Actions workflow at `.github/workflows/trenchcoat-ci.yaml` runs:
 - **Test**: `go test -race -coverprofile`
-- **Lint**: golangci-lint v2.5.0
+- **Lint**: golangci-lint v2.10.1
 - **Vet**: `go vet`, `go mod tidy` check, `govulncheck`
 - **Format**: `gofmt`, `goimports`
 - **Build**: Cross-compile linux/darwin x amd64/arm64 with ldflags
