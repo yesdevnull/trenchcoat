@@ -192,6 +192,21 @@ GitHub Actions workflow at `.github/workflows/trenchcoat-ci.yaml` runs:
 - **Format**: `gofmt`, `goimports`
 - **Build**: Cross-compile linux/darwin x amd64/arm64 with ldflags
 
+## Pre-commit Requirements
+
+Before every commit, run the following and fix any issues:
+
+```bash
+gofmt -w .                  # Format all Go code
+goimports -w .              # Fix imports
+golangci-lint run ./...     # Lint
+go vet ./...                # Static analysis
+go test -race ./...         # Run tests with race detector
+```
+
+All Go source files **must** be formatted with `gofmt` and `goimports` before
+committing. Unformatted code must not be committed.
+
 ## Conventions
 
 - Use `net/http` directly — no web frameworks
