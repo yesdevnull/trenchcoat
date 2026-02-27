@@ -2,9 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -79,11 +76,9 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		"dedupe", dedupe,
 	)
 
-	// Wait for shutdown signal.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	logger.Info("received signal, shutting down", "signal", sig)
+	// Wait for context cancellation (signal-based in production, explicit in tests).
+	<-cmd.Context().Done()
+	logger.Info("received signal, shutting down", "signal", cmd.Context().Err())
 
 	if err := p.Shutdown(10 * time.Second); err != nil {
 		return err

@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -200,9 +200,10 @@ coats:
 }
 
 func TestServeCmd_NoCoats(t *testing.T) {
-	// Start serve with no coats on a random port. It will start successfully
-	// and then we send SIGINT to unblock it.
+	ctx, cancel := context.WithCancel(context.Background())
+
 	cmd := newServeCmd()
+	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{"--port", "0"})
 
 	done := make(chan error, 1)
@@ -210,11 +211,9 @@ func TestServeCmd_NoCoats(t *testing.T) {
 		done <- cmd.Execute()
 	}()
 
-	// Give the server time to start.
+	// Give the server time to start, then cancel the context.
 	time.Sleep(100 * time.Millisecond)
-
-	// Send SIGINT to unblock.
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 
 	select {
 	case err := <-done:
@@ -239,7 +238,10 @@ coats:
       body: "ok"
 `)
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	cmd := newServeCmd()
+	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{"--coats", coatFile, "--port", "0", "--verbose"})
 
 	done := make(chan error, 1)
@@ -248,7 +250,7 @@ coats:
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 
 	select {
 	case err := <-done:
@@ -272,7 +274,10 @@ coats:
       code: 200
 `)
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	cmd := newServeCmd()
+	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{"--coats", coatFile, "--port", "0", "--watch"})
 
 	done := make(chan error, 1)
@@ -281,7 +286,7 @@ coats:
 	}()
 
 	time.Sleep(200 * time.Millisecond)
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 
 	select {
 	case err := <-done:
@@ -326,7 +331,10 @@ func TestProxyCmd_InvalidUpstreamURL(t *testing.T) {
 }
 
 func TestProxyCmd_StartAndStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	cmd := newProxyCmd()
+	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{"http://localhost:9999", "--port", "0", "--write-dir", t.TempDir()})
 
 	done := make(chan error, 1)
@@ -335,7 +343,7 @@ func TestProxyCmd_StartAndStop(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 
 	select {
 	case err := <-done:
@@ -348,7 +356,10 @@ func TestProxyCmd_StartAndStop(t *testing.T) {
 }
 
 func TestProxyCmd_VerboseMode(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	cmd := newProxyCmd()
+	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{"http://localhost:9999", "--port", "0", "--write-dir", t.TempDir(), "--verbose", "--log-format", "json"})
 
 	done := make(chan error, 1)
@@ -357,7 +368,7 @@ func TestProxyCmd_VerboseMode(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 
 	select {
 	case err := <-done:
@@ -373,17 +384,21 @@ func TestProxyCmd_VerboseMode(t *testing.T) {
 
 func TestWatchCoats_NonExistentPaths(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	// Should not panic even with non-existent paths.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	done := make(chan struct{})
 	go func() {
-		watchCoats(logger, nil, []string{"/no/such/path"})
+		watchCoats(ctx, logger, nil, []string{"/no/such/path"})
 		close(done)
 	}()
+
+	// Cancel to stop the watcher cleanly.
+	cancel()
 	select {
 	case <-done:
-		// Returned quickly — that's fine.
-	case <-time.After(1 * time.Second):
-		// Running (watching) — that's fine too.
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
 	}
 }
 
@@ -408,16 +423,22 @@ coats:
 	}
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	done := make(chan struct{})
 	go func() {
-		watchCoats(logger, srv, []string{dir, coatFile})
+		watchCoats(ctx, logger, srv, []string{dir, coatFile})
 		close(done)
 	}()
-	// Let it run briefly, checking it doesn't crash.
+
+	// Let the watcher start, then cancel to stop it cleanly.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
 	select {
 	case <-done:
-	case <-time.After(200 * time.Millisecond):
-		// Still running — that's fine for a watcher.
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
 	}
 }
 

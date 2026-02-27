@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/yesdevnull/trenchcoat/internal/config"
@@ -33,7 +36,11 @@ func main() {
 	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newProxyCmd())
 
-	if err := rootCmd.Execute(); err != nil {
+	// Set up signal-based context so serve/proxy commands shut down on SIGINT/SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
