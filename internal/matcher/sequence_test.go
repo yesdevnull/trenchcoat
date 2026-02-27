@@ -183,6 +183,7 @@ func TestMatch_ConcurrentSequences(t *testing.T) {
 			r := m.Match(newRequest(t, "GET", "/concurrent", nil))
 			if r == nil {
 				t.Error("expected match")
+				return
 			}
 			if r.ResponseIdx < 0 || r.ResponseIdx > 2 {
 				t.Errorf("unexpected response index: %d", r.ResponseIdx)
