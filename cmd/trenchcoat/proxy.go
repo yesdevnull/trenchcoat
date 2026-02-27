@@ -78,7 +78,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 
 	// Wait for context cancellation (signal-based in production, explicit in tests).
 	<-cmd.Context().Done()
-	logger.Info("received signal, shutting down", "signal", cmd.Context().Err())
+	logger.Info("context canceled, shutting down", "reason", cmd.Context().Err())
 
 	if err := p.Shutdown(10 * time.Second); err != nil {
 		return err

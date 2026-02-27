@@ -211,8 +211,7 @@ func TestServeCmd_NoCoats(t *testing.T) {
 		done <- cmd.Execute()
 	}()
 
-	// Give the server time to start, then cancel the context.
-	time.Sleep(100 * time.Millisecond)
+	// Cancel the context to stop the server; runServe waits on ctx after Start().
 	cancel()
 
 	select {
@@ -249,7 +248,7 @@ coats:
 		done <- cmd.Execute()
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Cancel the context to stop the server; runServe waits on ctx after Start().
 	cancel()
 
 	select {
@@ -285,7 +284,7 @@ coats:
 		done <- cmd.Execute()
 	}()
 
-	time.Sleep(200 * time.Millisecond)
+	// Cancel the context to stop the server; runServe waits on ctx after Start().
 	cancel()
 
 	select {
@@ -342,7 +341,7 @@ func TestProxyCmd_StartAndStop(t *testing.T) {
 		done <- cmd.Execute()
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Cancel the context to stop the proxy; runProxy waits on ctx after Start().
 	cancel()
 
 	select {
@@ -367,7 +366,7 @@ func TestProxyCmd_VerboseMode(t *testing.T) {
 		done <- cmd.Execute()
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Cancel the context to stop the proxy; runProxy waits on ctx after Start().
 	cancel()
 
 	select {
@@ -432,8 +431,7 @@ coats:
 		close(done)
 	}()
 
-	// Let the watcher start, then cancel to stop it cleanly.
-	time.Sleep(200 * time.Millisecond)
+	// Cancel the context to stop the watcher cleanly.
 	cancel()
 	select {
 	case <-done:
