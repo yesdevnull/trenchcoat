@@ -16,7 +16,6 @@ func TestWithCoat(t *testing.T) {
 		}),
 	)
 	srv.Start(t)
-	defer srv.Stop()
 
 	resp, err := http.Get(srv.URL + "/test")
 	if err != nil {
@@ -45,7 +44,6 @@ func TestWithCoats(t *testing.T) {
 		),
 	)
 	srv.Start(t)
-	defer srv.Stop()
 
 	resp, err := http.Get(srv.URL + "/a")
 	if err != nil {
@@ -85,7 +83,6 @@ coats:
 
 	srv := NewServer(WithCoatFile(coatFile))
 	srv.Start(t)
-	defer srv.Stop()
 
 	resp, err := http.Get(srv.URL + "/from-file")
 	if err != nil {
@@ -113,7 +110,6 @@ func TestWithVerbose(t *testing.T) {
 	}
 
 	srv.Start(t)
-	defer srv.Stop()
 
 	resp, err := http.Get(srv.URL + "/verbose")
 	if err != nil {

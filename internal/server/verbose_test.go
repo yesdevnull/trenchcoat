@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,7 +26,7 @@ func TestServe_VerboseLogging(t *testing.T) {
 
 	srv := server.New(coats, server.Config{
 		Verbose: true,
-		Logger:  slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	_, err := srv.Start("127.0.0.1:0")
 	if err != nil {
