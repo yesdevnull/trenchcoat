@@ -6,6 +6,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// sanitiseRe matches characters that are not filename-safe.
+var sanitiseRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // Config holds proxy configuration.
 type Config struct {
@@ -108,7 +112,7 @@ func (p *Proxy) Start(addr string) (string, error) {
 	p.listener = ln
 
 	go func() {
-		if err := p.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := p.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			p.logger.Error("proxy server error", "error", err)
 		}
 	}()
@@ -206,7 +210,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			"method", r.Method,
 			"uri", r.URL.RequestURI(),
 			"upstream_status", upstreamResp.StatusCode,
-			"upstream_duration", upstreamDuration.String(),
+			"upstream_duration", upstreamDuration,
 			"captured", shouldCapture,
 		)
 	}
@@ -337,8 +341,7 @@ func SanitisePath(path string) string {
 	// Replace / with _.
 	path = strings.ReplaceAll(path, "/", "_")
 	// Strip non-alphanumeric characters (except _ and -).
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	path = re.ReplaceAllString(path, "")
+	path = sanitiseRe.ReplaceAllString(path, "")
 	if path == "" {
 		path = "root"
 	}

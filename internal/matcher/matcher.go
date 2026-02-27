@@ -31,6 +31,7 @@ type entry struct {
 	regex       *regexp.Regexp // only for regex URIs
 	literalLen  int            // length of literal prefix for glob patterns
 	specificity int            // number of qualifiers (headers + query)
+	method      string         // effective method (uppercased, defaulted to GET)
 	methodIsANY bool
 
 	// Sequence state for stateful responses.
@@ -88,10 +89,10 @@ func New(coats []coat.Coat) *Matcher {
 		if method == "" {
 			method = "GET"
 		}
+		e.method = method
 		e.methodIsANY = method == "ANY"
 
 		// Compute specificity: count of qualifiers (headers + query presence).
-		e.specificity = 0
 		if len(c.Request.Headers) > 0 {
 			e.specificity += len(c.Request.Headers)
 		}
@@ -234,14 +235,7 @@ func (a matchScore) betterThan(b matchScore) bool {
 }
 
 func matchesMethod(e *entry, method string) bool {
-	coatMethod := strings.ToUpper(e.coat.Request.Method)
-	if coatMethod == "" {
-		coatMethod = "GET"
-	}
-	if coatMethod == "ANY" {
-		return true
-	}
-	return coatMethod == method
+	return e.methodIsANY || e.method == method
 }
 
 func matchesURI(e *entry, reqPath string) bool {

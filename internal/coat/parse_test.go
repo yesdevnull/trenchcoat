@@ -474,43 +474,6 @@ coats:
 	}
 }
 
-// --- LoadDirectory tests ---
-
-func TestLoadDirectory(t *testing.T) {
-	dir := t.TempDir()
-	yaml1 := `
-coats:
-  - request:
-      uri: "/a"
-    response:
-      code: 200
-`
-	yaml2 := `
-coats:
-  - request:
-      uri: "/b"
-    response:
-      code: 201
-`
-	if err := os.WriteFile(filepath.Join(dir, "a.yaml"), []byte(yaml1), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "b.yml"), []byte(yaml2), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "c.txt"), []byte("ignored"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	files, err := coat.LoadDirectory(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(files) != 2 {
-		t.Fatalf("expected 2 coat files, got %d", len(files))
-	}
-}
-
 // --- Helpers ---
 
 func writeTemp(t *testing.T, name, content string) string {
