@@ -33,8 +33,26 @@ trenchcoat.go       Public API package for Go test integration
 
 ### Requirements
 
-- Go 1.25+
+- Go 1.25+ (latest: 1.25.7)
 - golangci-lint v2.5.0+
+
+### Installing Go
+
+If Go 1.25+ is not installed or the auto-download via `GOTOOLCHAIN` fails (e.g.
+due to DNS/network restrictions), install manually:
+
+```bash
+# Download (linux/amd64 — adjust for your platform)
+curl -fSL -o /tmp/go1.25.7.linux-amd64.tar.gz "https://go.dev/dl/go1.25.7.linux-amd64.tar.gz"
+
+# Install (removes any previous Go installation in /usr/local/go)
+rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go1.25.7.linux-amd64.tar.gz
+
+# Verify
+go version   # should print "go version go1.25.7 linux/amd64"
+```
+
+Ensure `/usr/local/go/bin` is in your `PATH`.
 
 ### Commands
 
