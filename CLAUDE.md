@@ -33,7 +33,7 @@ trenchcoat.go       Public API package for Go test integration
 
 ### Requirements
 
-- Go 1.25+ (latest: 1.25.7)
+- Go 1.25.x (pinned in CI: 1.25.7)
 - golangci-lint v2.10.1+
 
 ### Installing Go
@@ -168,8 +168,7 @@ srv := trenchcoat.NewServer(
         },
     }),
 )
-srv.Start(t)
-defer srv.Stop()
+srv.Start(t) // registers t.Cleanup to stop the server
 // srv.URL contains "http://127.0.0.1:<port>"
 ```
 

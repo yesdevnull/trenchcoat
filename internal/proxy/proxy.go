@@ -210,7 +210,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			"method", r.Method,
 			"uri", r.URL.RequestURI(),
 			"upstream_status", upstreamResp.StatusCode,
-			"upstream_duration", upstreamDuration,
+			slog.Duration("upstream_duration", upstreamDuration),
 			"captured", shouldCapture,
 		)
 	}

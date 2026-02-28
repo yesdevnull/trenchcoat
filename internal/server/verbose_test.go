@@ -1,11 +1,12 @@
 package server_test
 
 import (
-	"io"
+	"bytes"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,9 +25,10 @@ func TestServe_VerboseLogging(t *testing.T) {
 		},
 	}
 
+	var logBuf bytes.Buffer
 	srv := server.New(coats, server.Config{
 		Verbose: true,
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
 	})
 	_, err := srv.Start("127.0.0.1:0")
 	if err != nil {
@@ -49,6 +51,14 @@ func TestServe_VerboseLogging(t *testing.T) {
 	}
 	_ = resp2.Body.Close()
 	assertEqual(t, "404 status", 404, resp2.StatusCode)
+
+	// Assert that verbose logging captured expected fields.
+	logOutput := logBuf.String()
+	for _, want := range []string{"matched=true", "coat=verbose-test", "matched=false", "status=404", "duration="} {
+		if !strings.Contains(logOutput, want) {
+			t.Errorf("expected log output to contain %q, got:\n%s", want, logOutput)
+		}
+	}
 }
 
 func TestServe_EmptyBody(t *testing.T) {
