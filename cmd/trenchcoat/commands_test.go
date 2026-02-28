@@ -3,8 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"io"
 	"log/slog"
+	"math/big"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -297,6 +310,172 @@ coats:
 	}
 }
 
+func TestServeCmd_TLS(t *testing.T) {
+	// Generate self-signed certificate.
+	certDir := t.TempDir()
+	certFile, keyFile := generateSelfSignedCert(t, certDir)
+
+	// Create a coat file.
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "tls-coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "tls-test"
+    request:
+      uri: "/secure"
+    response:
+      code: 200
+      body: "secure-ok"
+`)
+
+	// Pick a free port (runServe doesn't expose the listen address).
+	port := freePort(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cmd := newServeCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{
+		"--coats", coatFile,
+		"--port", fmt.Sprintf("%d", port),
+		"--tls-cert", certFile,
+		"--tls-key", keyFile,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Execute()
+	}()
+
+	// Build TLS client and wait for server readiness.
+	client := newTLSClient(t, certFile)
+	url := fmt.Sprintf("https://127.0.0.1:%d/secure", port)
+	waitForTLS(t, client, url)
+
+	// Make the actual HTTPS request and assert.
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("TLS request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if string(body) != "secure-ok" {
+		t.Fatalf("expected body %q, got %q", "secure-ok", string(body))
+	}
+
+	// Shut down cleanly.
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error from serve: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for serve to stop")
+	}
+}
+
+func TestBinary_TLS(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+
+	// Build the binary.
+	binary := filepath.Join(t.TempDir(), "trenchcoat")
+	build := exec.Command("go", "build", "-o", binary, "./")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build binary: %v\n%s", err, out)
+	}
+
+	// Generate self-signed certificate.
+	certDir := t.TempDir()
+	certFile, keyFile := generateSelfSignedCert(t, certDir)
+
+	// Create a coat file.
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "binary-tls"
+    request:
+      uri: "/hello"
+    response:
+      code: 200
+      body: "hello-tls"
+`)
+
+	port := freePort(t)
+
+	// Start the binary as a subprocess.
+	cmd := exec.Command(binary, "serve",
+		"--coats", coatFile,
+		"--port", fmt.Sprintf("%d", port),
+		"--tls-cert", certFile,
+		"--tls-key", keyFile,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start binary: %v", err)
+	}
+	t.Cleanup(func() {
+		// Ensure process is killed if test fails early.
+		_ = cmd.Process.Signal(os.Kill)
+		_ = cmd.Wait()
+	})
+
+	// Wait for TLS readiness.
+	client := newTLSClient(t, certFile)
+	url := fmt.Sprintf("https://127.0.0.1:%d/hello", port)
+	waitForTLS(t, client, url)
+
+	// Make an HTTPS request and assert.
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("TLS request to binary failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if string(body) != "hello-tls" {
+		t.Fatalf("expected body %q, got %q", "hello-tls", string(body))
+	}
+
+	// Send SIGINT for graceful shutdown.
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("failed to send SIGINT: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("binary exited with error: %v\nstderr: %s", err, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for binary to exit")
+	}
+}
+
 // --- proxy command tests ---
 
 func TestProxyCmd_InvalidDedupe(t *testing.T) {
@@ -448,4 +627,115 @@ func writeTestFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}
+}
+
+// freePort binds an ephemeral port, records it, and closes the listener.
+// The port is momentarily available for reuse — standard Go test pattern.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to bind ephemeral port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("failed to close ephemeral listener: %v", err)
+	}
+	return port
+}
+
+// generateSelfSignedCert creates a self-signed ECDSA P256 certificate and
+// private key for localhost/127.0.0.1, writing PEM files to dir.
+// Duplicated from internal/server/tls_test.go (package server_test is not
+// importable from package main).
+func generateSelfSignedCert(t *testing.T, dir string) (certFile, keyFile string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		t.Fatalf("failed to create cert file: %v", err)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		t.Fatal(err)
+	}
+	if err := certOut.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal EC private key: %v", err)
+	}
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		t.Fatalf("failed to create key file: %v", err)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		t.Fatal(err)
+	}
+	if err := keyOut.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	return certFile, keyFile
+}
+
+// newTLSClient returns an HTTP client that trusts the given PEM certificate file.
+func newTLSClient(t *testing.T, certFile string) *http.Client {
+	t.Helper()
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatalf("failed to read cert file: %v", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(certPEM) {
+		t.Fatal("failed to append cert to pool")
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs: pool,
+			},
+		},
+	}
+}
+
+// waitForTLS polls the given HTTPS URL until it responds or the timeout is reached.
+func waitForTLS(t *testing.T, client *http.Client, url string) {
+	t.Helper()
+	var lastErr error
+	for range 50 {
+		resp, err := client.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		lastErr = err
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("TLS server not ready after polling: %v", lastErr)
 }
