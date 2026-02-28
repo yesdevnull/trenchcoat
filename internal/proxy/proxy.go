@@ -178,6 +178,10 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Strip Accept-Encoding so the upstream returns uncompressed content.
+	// Captured coat files must be human-readable (not gzip binary).
+	proxyReq.Header.Del("Accept-Encoding")
+
 	upstreamResp, err := p.client.Do(proxyReq)
 	if err != nil {
 		p.logger.Error("upstream request failed", "error", err)
