@@ -5,6 +5,18 @@
     "helpers:pinGitHubActionDigests"
   ],
   "labels": ["dependencies"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Go version references in CLAUDE.md",
+      "fileMatch": ["^CLAUDE\\.md$"],
+      "matchStrings": [
+        "go(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version"
+    }
+  ],
   "packageRules": [
     {
       "description": "Group GitHub Actions updates together",

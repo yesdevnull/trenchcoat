@@ -242,7 +242,7 @@ func (s *Server) logRequest(r *http.Request, coatName string, status int, start 
 		"matched", matched,
 		"coat", coatName,
 		"status", status,
-		"duration", time.Since(start),
+		slog.Duration("duration", time.Since(start)),
 	)
 }
 
