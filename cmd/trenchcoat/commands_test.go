@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yesdevnull/trenchcoat/internal/coat"
 	"github.com/yesdevnull/trenchcoat/internal/server"
 )
 
@@ -458,22 +460,181 @@ coats:
 		t.Fatalf("expected body %q, got %q", "hello-tls", string(body))
 	}
 
-	// Send SIGINT for graceful shutdown.
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("failed to send SIGINT: %v", err)
+	// Graceful shutdown.
+	signalAndWait(t, cmd, &stderr, 5*time.Second)
+}
+
+func TestBinary_ProxyThenServe(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
 	}
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	// Phase 0: Check network availability.
+	checkResp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
+	if err != nil {
+		t.Skipf("skipping: jsonplaceholder.typicode.com unreachable: %v", err)
+	}
+	_ = checkResp.Body.Close()
+	if checkResp.StatusCode != 200 {
+		t.Skipf("skipping: jsonplaceholder.typicode.com returned status %d", checkResp.StatusCode)
+	}
 
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("binary exited with error: %v\nstderr: %s", err, stderr.String())
+	// Phase 1: Build binary.
+	binary := filepath.Join(t.TempDir(), "trenchcoat")
+	build := exec.Command("go", "build", "-o", binary, "./")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build binary: %v\n%s", err, out)
+	}
+
+	// Phase 2: Start proxy mode.
+	writeDir := t.TempDir()
+	proxyPort := freePort(t)
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+
+	proxyCmd := exec.Command(binary, "proxy",
+		"https://jsonplaceholder.typicode.com",
+		"--port", fmt.Sprintf("%d", proxyPort),
+		"--write-dir", writeDir,
+		"--dedupe", "overwrite",
+	)
+	var proxyStderr bytes.Buffer
+	proxyCmd.Stderr = &proxyStderr
+
+	if err := proxyCmd.Start(); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = proxyCmd.Process.Signal(os.Kill)
+		_ = proxyCmd.Wait()
+	})
+
+	waitForHTTP(t, proxyURL+"/posts/1")
+
+	// Phase 3: Make the real request through proxy and capture the body.
+	resp, err := http.Get(proxyURL + "/posts/1")
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	capturedBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read proxy response body: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected proxy response 200, got %d", resp.StatusCode)
+	}
+	if len(capturedBody) == 0 {
+		t.Fatal("proxy response body is empty")
+	}
+
+	// Validate captured body is valid JSON with expected keys.
+	var post map[string]any
+	if err := json.Unmarshal(capturedBody, &post); err != nil {
+		t.Fatalf("proxy response is not valid JSON: %v\nbody: %s", err, capturedBody)
+	}
+	for _, key := range []string{"userId", "id", "title", "body"} {
+		if _, ok := post[key]; !ok {
+			t.Fatalf("proxy response JSON missing key %q: %s", key, capturedBody)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for binary to exit")
 	}
+
+	// Phase 4: Stop proxy (flushes captures via Shutdown → captures.Wait).
+	signalAndWait(t, proxyCmd, &proxyStderr, 10*time.Second)
+
+	// Phase 5: Validate captured coat via binary.
+	validateCmd := exec.Command(binary, "validate", writeDir)
+	if out, err := validateCmd.CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+
+	// Phase 6: Verify captured coat file structure.
+	coatFile := filepath.Join(writeDir, "GET_posts_1_200.yaml")
+	parsed, err := coat.ParseFile(coatFile)
+	if err != nil {
+		t.Fatalf("failed to parse captured coat file: %v", err)
+	}
+	if len(parsed.Coats) != 1 {
+		t.Fatalf("expected 1 coat, got %d", len(parsed.Coats))
+	}
+	c := parsed.Coats[0]
+	if c.Request.Method != "GET" {
+		t.Fatalf("expected request method GET, got %q", c.Request.Method)
+	}
+	if c.Request.URI != "/posts/1" {
+		t.Fatalf("expected request URI /posts/1, got %q", c.Request.URI)
+	}
+	if c.Response == nil {
+		t.Fatal("expected response in coat, got nil")
+	}
+	if c.Response.Code != 200 {
+		t.Fatalf("expected response code 200, got %d", c.Response.Code)
+	}
+	if c.Response.Body == "" {
+		t.Fatal("expected non-empty response body in coat")
+	}
+
+	// Verify coat body is valid JSON with expected keys.
+	var coatPost map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(c.Response.Body)), &coatPost); err != nil {
+		t.Fatalf("coat response body is not valid JSON: %v\nbody: %s", err, c.Response.Body)
+	}
+	for _, key := range []string{"userId", "id", "title", "body"} {
+		if _, ok := coatPost[key]; !ok {
+			t.Fatalf("coat response body JSON missing key %q", key)
+		}
+	}
+
+	// Phase 7: Start serve mode with captured coat.
+	servePort := freePort(t)
+	serveURL := fmt.Sprintf("http://127.0.0.1:%d", servePort)
+
+	serveCmd := exec.Command(binary, "serve",
+		"--coats", writeDir,
+		"--port", fmt.Sprintf("%d", servePort),
+	)
+	var serveStderr bytes.Buffer
+	serveCmd.Stderr = &serveStderr
+
+	if err := serveCmd.Start(); err != nil {
+		t.Fatalf("failed to start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = serveCmd.Process.Signal(os.Kill)
+		_ = serveCmd.Wait()
+	})
+
+	waitForHTTP(t, serveURL+"/posts/1")
+
+	// Phase 8: Assert serve response matches proxy capture.
+	serveResp, err := http.Get(serveURL + "/posts/1")
+	if err != nil {
+		t.Fatalf("serve request failed: %v", err)
+	}
+	serveBody, err := io.ReadAll(serveResp.Body)
+	_ = serveResp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read serve response body: %v", err)
+	}
+	if serveResp.StatusCode != 200 {
+		t.Fatalf("expected serve response 200, got %d", serveResp.StatusCode)
+	}
+
+	// Normalize trailing whitespace from YAML block scalar round-trip.
+	want := strings.TrimRight(string(capturedBody), "\n")
+	got := strings.TrimRight(string(serveBody), "\n")
+	if got != want {
+		t.Fatalf("serve response body does not match proxy capture.\nwant: %s\ngot:  %s", want, got)
+	}
+
+	// Validate served body is also valid JSON.
+	var servePost map[string]any
+	if err := json.Unmarshal(serveBody, &servePost); err != nil {
+		t.Fatalf("serve response is not valid JSON: %v\nbody: %s", err, serveBody)
+	}
+
+	// Phase 9: Stop serve.
+	signalAndWait(t, serveCmd, &serveStderr, 5*time.Second)
 }
 
 // --- proxy command tests ---
@@ -738,4 +899,38 @@ func waitForTLS(t *testing.T, client *http.Client, url string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("TLS server not ready after polling: %v", lastErr)
+}
+
+// waitForHTTP polls the given HTTP URL until it responds or the timeout is reached.
+func waitForHTTP(t *testing.T, url string) {
+	t.Helper()
+	var lastErr error
+	for range 50 {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		lastErr = err
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("HTTP server not ready after polling: %v", lastErr)
+}
+
+// signalAndWait sends a signal to a process and waits for it to exit with a timeout.
+func signalAndWait(t *testing.T, cmd *exec.Cmd, stderr *bytes.Buffer, timeout time.Duration) {
+	t.Helper()
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("failed to send SIGINT: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("process exited with error: %v\nstderr: %s", err, stderr.String())
+		}
+	case <-time.After(timeout):
+		t.Fatal("timeout waiting for process to exit")
+	}
 }
