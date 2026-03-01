@@ -5,6 +5,7 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -80,12 +81,18 @@ func New(cfg Config) (*Proxy, error) {
 		return nil, fmt.Errorf("invalid upstream URL %q: host must not be empty", cfg.UpstreamURL)
 	}
 
+	// Clone the default transport with DisableCompression so the proxy does not
+	// auto-add Accept-Encoding or auto-decompress responses. This keeps the
+	// proxy transparent: compressed responses are relayed as-is to the client.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableCompression = true
+
 	p := &Proxy{
 		config:   cfg,
 		logger:   cfg.Logger,
 		upstream: upstream,
 		client: &http.Client{
-			Transport: http.DefaultTransport,
+			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -178,10 +185,6 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Strip Accept-Encoding so the upstream returns uncompressed content.
-	// Captured coat files must be human-readable (not gzip binary).
-	proxyReq.Header.Del("Accept-Encoding")
-
 	upstreamResp, err := p.client.Do(proxyReq)
 	if err != nil {
 		p.logger.Error("upstream request failed", "error", err)
@@ -238,6 +241,23 @@ func (p *Proxy) shouldCapture(urlPath string) bool {
 }
 
 func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response, respBody []byte) {
+	// Decompress response body for human-readable coat capture.
+	captureBody := respBody
+	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+		gr, err := gzip.NewReader(bytes.NewReader(respBody))
+		if err != nil {
+			p.logger.Error("failed to decompress gzip response for capture", "error", err)
+		} else {
+			decompressed, err := io.ReadAll(gr)
+			_ = gr.Close()
+			if err != nil {
+				p.logger.Error("failed to read decompressed response for capture", "error", err)
+			} else {
+				captureBody = decompressed
+			}
+		}
+	}
+
 	// Build coat definition.
 	reqHeaders := make(map[string]string)
 	for k := range r.Header {
@@ -248,7 +268,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 
 	respHeaders := make(map[string]string)
 	for k := range resp.Header {
-		if !p.isStrippedHeader(k) {
+		if !p.isStrippedHeader(k) && !isEncodingHeader(k) {
 			respHeaders[k] = resp.Header.Get(k)
 		}
 	}
@@ -264,7 +284,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 				Response: coatResponse{
 					Code:    resp.StatusCode,
 					Headers: respHeaders,
-					Body:    string(respBody),
+					Body:    string(captureBody),
 				},
 			},
 		},
@@ -336,6 +356,13 @@ func (p *Proxy) isStrippedHeader(header string) bool {
 		}
 	}
 	return false
+}
+
+// isEncodingHeader returns true for headers that should be stripped from
+// captured coat files when the body has been decompressed for readability.
+func isEncodingHeader(h string) bool {
+	lower := strings.ToLower(h)
+	return lower == "content-encoding" || lower == "content-length"
 }
 
 // SanitisePath converts a URL path to a filename-safe string.
