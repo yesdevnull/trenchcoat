@@ -1,6 +1,8 @@
 package proxy_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -310,6 +312,98 @@ func TestProxy_WaitCaptures(t *testing.T) {
 	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
 	if len(files) == 0 {
 		t.Fatal("expected captured coat file after WaitCaptures()")
+	}
+}
+
+func TestProxy_CompressedUpstream(t *testing.T) {
+	// Upstream that returns gzip-compressed content when Accept-Encoding: gzip is present.
+	const plainBody = `{"message": "hello from compressed upstream"}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			_, _ = gz.Write([]byte(plainBody))
+			_ = gz.Close()
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write(buf.Bytes())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(plainBody))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	// Send a request with explicit Accept-Encoding: gzip through the proxy.
+	req, _ := http.NewRequest("GET", p.URL()+"/api/compressed", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	// Use a transport with DisableCompression so the client does NOT auto-decompress.
+	client := &http.Client{
+		Transport: &http.Transport{DisableCompression: true},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request through proxy failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// The proxy should relay the compressed response transparently.
+	if resp.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("expected Content-Encoding: gzip in relayed response, got %q", resp.Header.Get("Content-Encoding"))
+	}
+
+	// Verify the relayed body is actually gzip-compressed (not plain text).
+	gr, err := gzip.NewReader(bytes.NewReader(respBody))
+	if err != nil {
+		t.Fatalf("relayed body is not valid gzip: %v", err)
+	}
+	decompressed, _ := io.ReadAll(gr)
+	_ = gr.Close()
+	if string(decompressed) != plainBody {
+		t.Fatalf("decompressed relayed body = %q, want %q", decompressed, plainBody)
+	}
+
+	// Wait for the capture to be written.
+	p.WaitCaptures()
+
+	// Read the captured coat file and verify the body is decompressed (human-readable).
+	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if len(files) == 0 {
+		t.Fatal("expected at least one captured coat file")
+	}
+	content, _ := os.ReadFile(files[0])
+	contentStr := string(content)
+
+	// The captured coat body must contain the plain text JSON, not gzip binary.
+	if !strings.Contains(contentStr, "hello from compressed upstream") {
+		t.Fatalf("expected coat file to contain decompressed body, got:\n%s", contentStr)
+	}
+
+	// Content-Encoding should NOT appear in the captured coat response headers.
+	if strings.Contains(contentStr, "Content-Encoding") {
+		t.Fatalf("expected coat file to NOT contain Content-Encoding header, got:\n%s", contentStr)
 	}
 }
 
