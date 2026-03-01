@@ -56,7 +56,11 @@ func TestProxy_Addr_BeforeStart(t *testing.T) {
 func TestProxy_ForwardsRequestBody(t *testing.T) {
 	var receivedBody string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := readAllBody(r)
+		b, err := readAllBody(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		receivedBody = string(b)
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte("ok"))

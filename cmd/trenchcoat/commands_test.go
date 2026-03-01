@@ -886,6 +886,7 @@ func newTLSClient(t *testing.T, certFile string) *http.Client {
 				RootCAs: pool,
 			},
 		},
+		Timeout: 5 * time.Second,
 	}
 }
 
