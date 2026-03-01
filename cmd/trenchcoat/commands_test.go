@@ -469,8 +469,12 @@ func TestBinary_ProxyThenServe(t *testing.T) {
 		t.Skip("skipping binary test in short mode")
 	}
 
+	// Shared client with explicit timeout to avoid hanging in
+	// CI environments without outbound network access or with slow DNS.
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
 	// Phase 0: Check network availability.
-	checkResp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
+	checkResp, err := httpClient.Get("https://jsonplaceholder.typicode.com/posts/1")
 	if err != nil {
 		t.Skipf("skipping: jsonplaceholder.typicode.com unreachable: %v", err)
 	}
@@ -512,7 +516,7 @@ func TestBinary_ProxyThenServe(t *testing.T) {
 	waitForHTTP(t, proxyURL+"/posts/1")
 
 	// Phase 3: Make the real request through proxy and capture the body.
-	resp, err := http.Get(proxyURL + "/posts/1")
+	resp, err := httpClient.Get(proxyURL + "/posts/1")
 	if err != nil {
 		t.Fatalf("proxy request failed: %v", err)
 	}
@@ -607,7 +611,7 @@ func TestBinary_ProxyThenServe(t *testing.T) {
 	waitForHTTP(t, serveURL+"/posts/1")
 
 	// Phase 8: Assert serve response matches proxy capture.
-	serveResp, err := http.Get(serveURL + "/posts/1")
+	serveResp, err := httpClient.Get(serveURL + "/posts/1")
 	if err != nil {
 		t.Fatalf("serve request failed: %v", err)
 	}
@@ -904,9 +908,10 @@ func waitForTLS(t *testing.T, client *http.Client, url string) {
 // waitForHTTP polls the given HTTP URL until it responds or the timeout is reached.
 func waitForHTTP(t *testing.T, url string) {
 	t.Helper()
+	client := &http.Client{Timeout: 2 * time.Second}
 	var lastErr error
 	for range 50 {
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
 			return
