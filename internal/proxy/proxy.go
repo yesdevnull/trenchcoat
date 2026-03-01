@@ -84,7 +84,18 @@ func New(cfg Config) (*Proxy, error) {
 	// Clone the default transport with DisableCompression so the proxy does not
 	// auto-add Accept-Encoding or auto-decompress responses. This keeps the
 	// proxy transparent: compressed responses are relayed as-is to the client.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok && dt != nil {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
 	transport.DisableCompression = true
 
 	p := &Proxy{
@@ -243,17 +254,19 @@ func (p *Proxy) shouldCapture(urlPath string) bool {
 func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response, respBody []byte) {
 	// Decompress response body for human-readable coat capture.
 	captureBody := respBody
+	decompressed := false
 	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
 		gr, err := gzip.NewReader(bytes.NewReader(respBody))
 		if err != nil {
 			p.logger.Error("failed to decompress gzip response for capture", "error", err)
 		} else {
-			decompressed, err := io.ReadAll(gr)
+			plain, err := io.ReadAll(gr)
 			_ = gr.Close()
 			if err != nil {
 				p.logger.Error("failed to read decompressed response for capture", "error", err)
 			} else {
-				captureBody = decompressed
+				captureBody = plain
+				decompressed = true
 			}
 		}
 	}
@@ -268,7 +281,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 
 	respHeaders := make(map[string]string)
 	for k := range resp.Header {
-		if !p.isStrippedHeader(k) && !isEncodingHeader(k) {
+		if !p.isStrippedHeader(k) && (!decompressed || !isEncodingHeader(k)) {
 			respHeaders[k] = resp.Header.Get(k)
 		}
 	}

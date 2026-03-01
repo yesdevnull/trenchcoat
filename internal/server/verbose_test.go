@@ -36,8 +36,10 @@ func TestServe_VerboseLogging(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
+	client := &http.Client{Timeout: 5 * time.Second}
+
 	// Make a matching request — exercises verbose logRequest with coat name.
-	resp, err := http.Get(srv.URL() + "/test")
+	resp, err := client.Get(srv.URL() + "/test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +47,7 @@ func TestServe_VerboseLogging(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 
 	// Make a non-matching request — exercises verbose logRequest without coat name.
-	resp2, err := http.Get(srv.URL() + "/not-found")
+	resp2, err := client.Get(srv.URL() + "/not-found")
 	if err != nil {
 		t.Fatal(err)
 	}

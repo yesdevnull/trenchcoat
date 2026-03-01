@@ -48,7 +48,10 @@ func TestProxy_ForwardsRequest(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -60,13 +63,19 @@ func TestProxy_ForwardsRequest(t *testing.T) {
 	p.WaitCaptures()
 
 	// Check that a coat file was captured.
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) == 0 {
 		t.Fatal("expected at least one captured coat file")
 	}
 
 	// Read the captured file and verify basic structure.
-	content, _ := os.ReadFile(files[0])
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read captured coat file: %v", err)
+	}
 	if !strings.Contains(string(content), "/api/v1/users") {
 		t.Fatalf("expected captured coat to contain URI, got: %s", content)
 	}
@@ -108,12 +117,18 @@ func TestProxy_StripHeaders(t *testing.T) {
 
 	p.WaitCaptures()
 
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) == 0 {
 		t.Fatal("expected captured coat file")
 	}
 
-	content, _ := os.ReadFile(files[0])
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read captured coat file: %v", err)
+	}
 	contentStr := string(content)
 	if strings.Contains(contentStr, "secret-token") {
 		t.Fatal("expected Authorization header to be stripped from captured coat")
@@ -158,7 +173,10 @@ func TestProxy_Filter(t *testing.T) {
 
 	p.WaitCaptures()
 
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) != 1 {
 		t.Fatalf("expected exactly 1 captured coat file (filter should exclude /health), got %d", len(files))
 	}
@@ -193,11 +211,17 @@ func TestProxy_Dedupe_Skip(t *testing.T) {
 	_ = resp.Body.Close()
 	p.WaitCaptures()
 
-	resp2, _ := http.Get(p.URL() + "/test")
+	resp2, err := http.Get(p.URL() + "/test")
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
 	_ = resp2.Body.Close()
 	p.WaitCaptures()
 
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) != 1 {
 		t.Fatalf("expected exactly 1 file with skip dedup, got %d", len(files))
 	}
@@ -234,7 +258,10 @@ func TestProxy_Dedupe_Append(t *testing.T) {
 		p.WaitCaptures()
 	}
 
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) != 3 {
 		t.Fatalf("expected 3 files with append dedup, got %d", len(files))
 	}
@@ -309,7 +336,10 @@ func TestProxy_WaitCaptures(t *testing.T) {
 	p.WaitCaptures()
 
 	// File should exist immediately after WaitCaptures returns.
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) == 0 {
 		t.Fatal("expected captured coat file after WaitCaptures()")
 	}
@@ -360,6 +390,7 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 	// Use a transport with DisableCompression so the client does NOT auto-decompress.
 	client := &http.Client{
 		Transport: &http.Transport{DisableCompression: true},
+		Timeout:   5 * time.Second,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -367,7 +398,10 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
 
 	// The proxy should relay the compressed response transparently.
 	if resp.Header.Get("Content-Encoding") != "gzip" {
@@ -379,8 +413,13 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("relayed body is not valid gzip: %v", err)
 	}
-	decompressed, _ := io.ReadAll(gr)
-	_ = gr.Close()
+	decompressed, err := io.ReadAll(gr)
+	if err != nil {
+		t.Fatalf("failed to decompress relayed body: %v", err)
+	}
+	if err := gr.Close(); err != nil {
+		t.Fatalf("failed to close gzip reader: %v", err)
+	}
 	if string(decompressed) != plainBody {
 		t.Fatalf("decompressed relayed body = %q, want %q", decompressed, plainBody)
 	}
@@ -389,11 +428,17 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 	p.WaitCaptures()
 
 	// Read the captured coat file and verify the body is decompressed (human-readable).
-	files, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob captured coat files: %v", err)
+	}
 	if len(files) == 0 {
 		t.Fatal("expected at least one captured coat file")
 	}
-	content, _ := os.ReadFile(files[0])
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read captured coat file: %v", err)
+	}
 	contentStr := string(content)
 
 	// The captured coat body must contain the plain text JSON, not gzip binary.
