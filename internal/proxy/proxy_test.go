@@ -15,6 +15,10 @@ import (
 	"github.com/yesdevnull/trenchcoat/internal/proxy"
 )
 
+// httpClient is a shared test client with an explicit timeout to prevent
+// tests from hanging indefinitely if the proxy or upstream stalls.
+var httpClient = &http.Client{Timeout: 5 * time.Second}
+
 func TestProxy_ForwardsRequest(t *testing.T) {
 	// Set up a test upstream server.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +46,7 @@ func TestProxy_ForwardsRequest(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Make a request through the proxy.
-	resp, err := http.Get(p.URL() + "/api/v1/users")
+	resp, err := httpClient.Get(p.URL() + "/api/v1/users")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -107,9 +111,12 @@ func TestProxy_StripHeaders(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
-	req, _ := http.NewRequest("GET", p.URL()+"/test", nil)
+	req, err := http.NewRequest("GET", p.URL()+"/test", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
 	req.Header.Set("Authorization", "Bearer secret-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -164,11 +171,17 @@ func TestProxy_Filter(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Request matching the filter.
-	resp, _ := http.Get(p.URL() + "/api/users")
+	resp, err := httpClient.Get(p.URL() + "/api/users")
+	if err != nil {
+		t.Fatalf("filter-matched request failed: %v", err)
+	}
 	_ = resp.Body.Close()
 
 	// Request NOT matching the filter.
-	resp2, _ := http.Get(p.URL() + "/health")
+	resp2, err := httpClient.Get(p.URL() + "/health")
+	if err != nil {
+		t.Fatalf("filter-excluded request failed: %v", err)
+	}
 	_ = resp2.Body.Close()
 
 	p.WaitCaptures()
@@ -207,11 +220,14 @@ func TestProxy_Dedupe_Skip(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Make the same request twice.
-	resp, _ := http.Get(p.URL() + "/test")
+	resp, err := httpClient.Get(p.URL() + "/test")
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
 	_ = resp.Body.Close()
 	p.WaitCaptures()
 
-	resp2, err := http.Get(p.URL() + "/test")
+	resp2, err := httpClient.Get(p.URL() + "/test")
 	if err != nil {
 		t.Fatalf("second request failed: %v", err)
 	}
@@ -253,7 +269,10 @@ func TestProxy_Dedupe_Append(t *testing.T) {
 
 	// Make the same request three times.
 	for i := 0; i < 3; i++ {
-		resp, _ := http.Get(p.URL() + "/test")
+		resp, err := httpClient.Get(p.URL() + "/test")
+		if err != nil {
+			t.Fatalf("request %d failed: %v", i+1, err)
+		}
 		_ = resp.Body.Close()
 		p.WaitCaptures()
 	}
@@ -291,7 +310,10 @@ func TestProxy_FileNaming(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
-	resp, _ := http.Post(p.URL()+"/api/v1/users", "application/json", strings.NewReader(`{"name": "test"}`))
+	resp, err := httpClient.Post(p.URL()+"/api/v1/users", "application/json", strings.NewReader(`{"name": "test"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	_ = resp.Body.Close()
 	p.WaitCaptures()
 
@@ -327,7 +349,7 @@ func TestProxy_WaitCaptures(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Make a request and use WaitCaptures instead of time.Sleep.
-	resp, err := http.Get(p.URL() + "/api/test")
+	resp, err := httpClient.Get(p.URL() + "/api/test")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -384,7 +406,10 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Send a request with explicit Accept-Encoding: gzip through the proxy.
-	req, _ := http.NewRequest("GET", p.URL()+"/api/compressed", nil)
+	req, err := http.NewRequest("GET", p.URL()+"/api/compressed", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	// Use a transport with DisableCompression so the client does NOT auto-decompress.

@@ -82,7 +82,7 @@ func TestProxy_ForwardsRequestBody(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
-	resp, err := http.Post(p.URL()+"/api/data", "application/json", strings.NewReader(`{"key":"value"}`))
+	resp, err := httpClient.Post(p.URL()+"/api/data", "application/json", strings.NewReader(`{"key":"value"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestProxy_CapturesQueryString(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
-	resp, err := http.Get(p.URL() + "/search?foo=bar&baz=qux")
+	resp, err := httpClient.Get(p.URL() + "/search?foo=bar&baz=qux")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestProxy_UpstreamUnreachable(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
-	resp, err := http.Get(p.URL() + "/test")
+	resp, err := httpClient.Get(p.URL() + "/test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,14 +195,14 @@ func TestProxy_Dedupe_Overwrite(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
 	// Make same request twice.
-	resp, err := http.Get(p.URL() + "/test")
+	resp, err := httpClient.Get(p.URL() + "/test")
 	if err != nil {
 		t.Fatalf("failed to perform first GET request: %v", err)
 	}
 	_ = resp.Body.Close()
 	p.WaitCaptures()
 
-	resp2, err := http.Get(p.URL() + "/test")
+	resp2, err := httpClient.Get(p.URL() + "/test")
 	if err != nil {
 		t.Fatalf("failed to perform second GET request: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestProxy_Verbose(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
 
-	resp, err := http.Get(p.URL() + "/test")
+	resp, err := httpClient.Get(p.URL() + "/test")
 	if err != nil {
 		t.Fatal(err)
 	}

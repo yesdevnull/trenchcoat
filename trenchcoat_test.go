@@ -5,7 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+// httpClient is a shared test client with an explicit timeout to prevent
+// tests from hanging indefinitely if the server stalls.
+var httpClient = &http.Client{Timeout: 5 * time.Second}
 
 func TestWithCoat(t *testing.T) {
 	srv := NewServer(
@@ -17,7 +22,7 @@ func TestWithCoat(t *testing.T) {
 	)
 	srv.Start(t)
 
-	resp, err := http.Get(srv.URL + "/test")
+	resp, err := httpClient.Get(srv.URL + "/test")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -45,7 +50,7 @@ func TestWithCoats(t *testing.T) {
 	)
 	srv.Start(t)
 
-	resp, err := http.Get(srv.URL + "/a")
+	resp, err := httpClient.Get(srv.URL + "/a")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -54,7 +59,7 @@ func TestWithCoats(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
-	resp2, err := http.Get(srv.URL + "/b")
+	resp2, err := httpClient.Get(srv.URL + "/b")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -84,7 +89,7 @@ coats:
 	srv := NewServer(WithCoatFile(coatFile))
 	srv.Start(t)
 
-	resp, err := http.Get(srv.URL + "/from-file")
+	resp, err := httpClient.Get(srv.URL + "/from-file")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -111,7 +116,7 @@ func TestWithVerbose(t *testing.T) {
 
 	srv.Start(t)
 
-	resp, err := http.Get(srv.URL + "/verbose")
+	resp, err := httpClient.Get(srv.URL + "/verbose")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
