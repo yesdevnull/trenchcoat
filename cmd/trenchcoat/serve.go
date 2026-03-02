@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -138,8 +137,7 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 				return
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) {
-				ext := strings.ToLower(filepath.Ext(event.Name))
-				if ext == ".yaml" || ext == ".yml" || ext == ".json" {
+				if coat.IsCoatFile(event.Name) {
 					logger.Info("coat file changed, reloading", "file", event.Name)
 					loaded, loadErrs := coat.LoadPaths(coatPaths)
 					for _, e := range loadErrs {
