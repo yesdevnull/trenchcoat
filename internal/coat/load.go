@@ -14,6 +14,13 @@ type LoadedCoat struct {
 	FilePath string
 }
 
+// IsCoatFile reports whether the given path has a recognised coat file extension
+// (.yaml, .yml, or .json).
+func IsCoatFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".yaml" || ext == ".yml" || ext == ".json"
+}
+
 // LoadPaths loads coat files from a list of file and directory paths.
 // Directories are scanned non-recursively for .yaml, .yml, and .json files.
 // Returns all loaded coats with their source paths, and any errors encountered.
@@ -55,11 +62,7 @@ func loadDir(dir string) ([]LoadedCoat, []error) {
 	var loaded []LoadedCoat
 	var errs []error
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+		if entry.IsDir() || !IsCoatFile(entry.Name()) {
 			continue
 		}
 		lc, loadErrs := loadFile(filepath.Join(dir, entry.Name()))
@@ -81,9 +84,9 @@ func loadFile(path string) ([]LoadedCoat, []error) {
 		validationErrs = append(validationErrs, fmt.Errorf("%s: %s", path, e.Error()))
 	}
 
-	var loaded []LoadedCoat
-	for _, c := range f.Coats {
-		loaded = append(loaded, LoadedCoat{Coat: c, FilePath: path})
+	loaded := make([]LoadedCoat, len(f.Coats))
+	for i, c := range f.Coats {
+		loaded[i] = LoadedCoat{Coat: c, FilePath: path}
 	}
 	return loaded, validationErrs
 }

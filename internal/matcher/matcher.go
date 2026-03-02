@@ -158,6 +158,8 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 	// Handle sequence responses.
 	if len(best.coat.Responses) > 0 {
 		best.seqMu.Lock()
+		defer best.seqMu.Unlock()
+
 		idx := best.seqCounter
 		seq := best.coat.Sequence
 		if seq == "" {
@@ -165,7 +167,6 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 		}
 
 		if seq == "once" && idx >= len(best.coat.Responses) {
-			best.seqMu.Unlock()
 			result.ResponseIdx = -1
 			result.Exhausted = true
 			return result
@@ -176,7 +177,6 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 		}
 
 		best.seqCounter++
-		best.seqMu.Unlock()
 		result.ResponseIdx = idx
 	} else {
 		result.ResponseIdx = -1

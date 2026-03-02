@@ -42,15 +42,10 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 		cfg.Logger = slog.Default()
 	}
 
-	coats := make([]coat.Coat, len(loaded))
-	for i, lc := range loaded {
-		coats[i] = lc.Coat
-	}
-
 	s := &Server{
 		logger:  cfg.Logger,
 		verbose: cfg.Verbose,
-		matcher: matcher.New(coats),
+		matcher: matcher.New(extractCoats(loaded)),
 		coats:   loaded,
 	}
 
@@ -61,26 +56,31 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 	return s
 }
 
+// extractCoats returns just the Coat values from a slice of LoadedCoats.
+func extractCoats(loaded []coat.LoadedCoat) []coat.Coat {
+	coats := make([]coat.Coat, len(loaded))
+	for i, lc := range loaded {
+		coats[i] = lc.Coat
+	}
+	return coats
+}
+
 // Start begins listening on the configured port. It returns the actual
 // address the server is listening on (useful for ephemeral ports).
 func (s *Server) Start(addr string) (string, error) {
-	ln, err := net.Listen("tcp4", addr)
-	if err != nil {
-		return "", fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-	s.listener = ln
-
-	go func() {
-		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.Error("server error", "error", err)
-		}
-	}()
-
-	return ln.Addr().String(), nil
+	return s.startListener(addr, func(ln net.Listener) error {
+		return s.httpServer.Serve(ln)
+	})
 }
 
 // StartTLS begins listening with TLS on the configured address.
 func (s *Server) StartTLS(addr, certFile, keyFile string) (string, error) {
+	return s.startListener(addr, func(ln net.Listener) error {
+		return s.httpServer.ServeTLS(ln, certFile, keyFile)
+	})
+}
+
+func (s *Server) startListener(addr string, serve func(net.Listener) error) (string, error) {
 	ln, err := net.Listen("tcp4", addr)
 	if err != nil {
 		return "", fmt.Errorf("failed to listen on %s: %w", addr, err)
@@ -88,8 +88,8 @@ func (s *Server) StartTLS(addr, certFile, keyFile string) (string, error) {
 	s.listener = ln
 
 	go func() {
-		if err := s.httpServer.ServeTLS(ln, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.Error("TLS server error", "error", err)
+		if err := serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.Error("server error", "error", err)
 		}
 	}()
 
@@ -123,14 +123,9 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 
 // Reload replaces the loaded coats and rebuilds the matcher.
 func (s *Server) Reload(loaded []coat.LoadedCoat) {
-	coats := make([]coat.Coat, len(loaded))
-	for i, lc := range loaded {
-		coats[i] = lc.Coat
-	}
-
 	s.mu.Lock()
 	s.coats = loaded
-	s.matcher = matcher.New(coats)
+	s.matcher = matcher.New(extractCoats(loaded))
 	s.mu.Unlock()
 
 	s.logger.Info("coats reloaded", "count", len(loaded))
