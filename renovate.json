@@ -4,12 +4,16 @@
     "config:recommended",
     "helpers:pinGitHubActionDigests"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "customManagers": [
     {
       "customType": "regex",
       "description": "Update Go version references in CLAUDE.md",
-      "fileMatch": ["^CLAUDE\\.md$"],
+      "managerFilePatterns": [
+        "/^CLAUDE\\.md$/"
+      ],
       "matchStrings": [
         "go(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
@@ -20,18 +24,26 @@
   "packageRules": [
     {
       "description": "Group GitHub Actions updates together",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github-actions"
     },
     {
       "description": "Group Go module updates together",
-      "matchManagers": ["gomod"],
+      "matchManagers": [
+        "gomod"
+      ],
       "groupName": "go-modules"
     },
     {
       "description": "Pin Go toolchain to 1.25.x — allow patch updates but not minor version bumps",
-      "matchDatasources": ["golang-version"],
-      "matchPackageNames": ["go"],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchPackageNames": [
+        "go"
+      ],
       "allowedVersions": "/^1\\.25/"
     }
   ]
