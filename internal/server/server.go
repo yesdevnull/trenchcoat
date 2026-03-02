@@ -123,9 +123,11 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 
 // Reload replaces the loaded coats and rebuilds the matcher.
 func (s *Server) Reload(loaded []coat.LoadedCoat) {
+	m := matcher.New(extractCoats(loaded))
+
 	s.mu.Lock()
 	s.coats = loaded
-	s.matcher = matcher.New(extractCoats(loaded))
+	s.matcher = m
 	s.mu.Unlock()
 
 	s.logger.Info("coats reloaded", "count", len(loaded))
