@@ -36,10 +36,8 @@ func TestServe_VerboseLogging(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
-	client := &http.Client{Timeout: 5 * time.Second}
-
 	// Make a matching request — exercises verbose logRequest with coat name.
-	resp, err := client.Get(srv.URL() + "/test")
+	resp, err := httpClient.Get(srv.URL() + "/test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +45,7 @@ func TestServe_VerboseLogging(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 
 	// Make a non-matching request — exercises verbose logRequest without coat name.
-	resp2, err := client.Get(srv.URL() + "/not-found")
+	resp2, err := httpClient.Get(srv.URL() + "/not-found")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +74,11 @@ func TestServe_EmptyBody(t *testing.T) {
 
 	srv := startServer(t, coats)
 
-	req, _ := http.NewRequest("DELETE", srv.URL()+"/resource", nil)
-	resp, err := http.DefaultClient.Do(req)
+	req, err := http.NewRequest("DELETE", srv.URL()+"/resource", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestServe_BodyFile_AbsolutePath(t *testing.T) {
 	}
 	srv := startServer(t, coats)
 
-	resp, err := http.Get(srv.URL() + "/abs")
+	resp, err := httpClient.Get(srv.URL() + "/abs")
 	if err != nil {
 		t.Fatal(err)
 	}

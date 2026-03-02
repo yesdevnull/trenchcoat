@@ -13,6 +13,10 @@ import (
 	"github.com/yesdevnull/trenchcoat/internal/server"
 )
 
+// httpClient is a shared test client with an explicit timeout to prevent
+// tests from hanging indefinitely if the server stalls.
+var httpClient = &http.Client{Timeout: 5 * time.Second}
+
 func TestServe_BasicResponse(t *testing.T) {
 	srv := startServer(t, []coat.LoadedCoat{
 		{
@@ -24,7 +28,7 @@ func TestServe_BasicResponse(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/hello")
+	resp, err := httpClient.Get(srv.URL() + "/hello")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -50,7 +54,7 @@ func TestServe_ResponseHeaders(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/json")
+	resp, err := httpClient.Get(srv.URL() + "/json")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -71,7 +75,7 @@ func TestServe_404_NoMatch(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/missing")
+	resp, err := httpClient.Get(srv.URL() + "/missing")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -99,7 +103,7 @@ func TestServe_DefaultStatusCode(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/test")
+	resp, err := httpClient.Get(srv.URL() + "/test")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -131,7 +135,7 @@ func TestServe_BodyFile(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/data")
+	resp, err := httpClient.Get(srv.URL() + "/data")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -154,7 +158,7 @@ func TestServe_BodyFile_Missing(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/data")
+	resp, err := httpClient.Get(srv.URL() + "/data")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -181,7 +185,7 @@ func TestServe_DelayMs(t *testing.T) {
 	})
 
 	start := time.Now()
-	resp, err := http.Get(srv.URL() + "/slow")
+	resp, err := httpClient.Get(srv.URL() + "/slow")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -205,7 +209,7 @@ func TestServe_GlobMatching(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/api/v1/users/42")
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users/42")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -226,7 +230,7 @@ func TestServe_RegexMatching(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/api/v1/users/123")
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users/123")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -235,7 +239,7 @@ func TestServe_RegexMatching(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 	assertEqual(t, "body", "numeric-user", readBody(t, resp))
 
-	resp2, err := http.Get(srv.URL() + "/api/v1/users/abc")
+	resp2, err := httpClient.Get(srv.URL() + "/api/v1/users/abc")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -262,7 +266,7 @@ func TestServe_MethodDifferentiation(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/api/users")
+	resp, err := httpClient.Get(srv.URL() + "/api/users")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -270,7 +274,7 @@ func TestServe_MethodDifferentiation(t *testing.T) {
 	assertEqual(t, "GET status", 200, resp.StatusCode)
 	assertEqual(t, "GET body", "list", readBody(t, resp))
 
-	resp2, err := http.Post(srv.URL()+"/api/users", "", nil)
+	resp2, err := httpClient.Post(srv.URL()+"/api/users", "", nil)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -295,9 +299,12 @@ func TestServe_HeaderMatching(t *testing.T) {
 	})
 
 	// With header — should match.
-	req, _ := http.NewRequest("GET", srv.URL()+"/protected", nil)
+	req, err := http.NewRequest("GET", srv.URL()+"/protected", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
 	req.Header.Set("Authorization", "Bearer my-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -305,7 +312,7 @@ func TestServe_HeaderMatching(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 
 	// Without header — no match.
-	resp2, err := http.Get(srv.URL() + "/protected")
+	resp2, err := httpClient.Get(srv.URL() + "/protected")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -334,7 +341,7 @@ func TestServe_DoubleSlashInPath(t *testing.T) {
 	// Override the parsed URL to preserve the double slash in the path.
 	req.URL.Opaque = "/Path/To/Json/swis://Hostname/Another/Thing"
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -356,7 +363,7 @@ func TestServe_DoubleSlashInPath_404Response(t *testing.T) {
 	})
 
 	// Request with single slash — should NOT match coat with double slash.
-	resp, err := http.Get(srv.URL() + "/Path/To/Json/swis:/Hostname/Another/Thing")
+	resp, err := httpClient.Get(srv.URL() + "/Path/To/Json/swis:/Hostname/Another/Thing")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -383,7 +390,7 @@ func TestServe_Sequence_Cycle(t *testing.T) {
 	})
 
 	// First request: 503.
-	resp, err := http.Get(srv.URL() + "/health")
+	resp, err := httpClient.Get(srv.URL() + "/health")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -392,7 +399,7 @@ func TestServe_Sequence_Cycle(t *testing.T) {
 	assertEqual(t, "first body", "down", readBody(t, resp))
 
 	// Second request: 200.
-	resp2, err := http.Get(srv.URL() + "/health")
+	resp2, err := httpClient.Get(srv.URL() + "/health")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -401,7 +408,7 @@ func TestServe_Sequence_Cycle(t *testing.T) {
 	assertEqual(t, "second body", "up", readBody(t, resp2))
 
 	// Third request: cycles back to 503.
-	resp3, err := http.Get(srv.URL() + "/health")
+	resp3, err := httpClient.Get(srv.URL() + "/health")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -425,7 +432,7 @@ func TestServe_Sequence_Once(t *testing.T) {
 	})
 
 	// First request.
-	resp, err := http.Get(srv.URL() + "/once")
+	resp, err := httpClient.Get(srv.URL() + "/once")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -433,7 +440,7 @@ func TestServe_Sequence_Once(t *testing.T) {
 	assertEqual(t, "first body", "first", readBody(t, resp))
 
 	// Second request.
-	resp2, err := http.Get(srv.URL() + "/once")
+	resp2, err := httpClient.Get(srv.URL() + "/once")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -441,7 +448,7 @@ func TestServe_Sequence_Once(t *testing.T) {
 	assertEqual(t, "second body", "second", readBody(t, resp2))
 
 	// Third request: exhausted, 404.
-	resp3, err := http.Get(srv.URL() + "/once")
+	resp3, err := httpClient.Get(srv.URL() + "/once")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -471,21 +478,21 @@ func TestServe_Sequence_DefaultCycle(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Get(srv.URL() + "/dc")
+	resp, err := httpClient.Get(srv.URL() + "/dc")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	assertEqual(t, "first", "a", readBody(t, resp))
 
-	resp2, err := http.Get(srv.URL() + "/dc")
+	resp2, err := httpClient.Get(srv.URL() + "/dc")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer func() { _ = resp2.Body.Close() }()
 	assertEqual(t, "second", "b", readBody(t, resp2))
 
-	resp3, err := http.Get(srv.URL() + "/dc")
+	resp3, err := httpClient.Get(srv.URL() + "/dc")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
