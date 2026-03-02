@@ -28,7 +28,7 @@ internal/
     validate.go           Schema validation (mutual exclusivity, regex, etc.)
     query.go              QueryField YAML/JSON unmarshalling
   config/                 Viper-based config file loading
-    config.go             Config discovery: --config > .trenchcoat.yaml > ~/.config/
+    config.go             Config discovery: --config > .trenchcoat.yaml > ~/.config/trenchcoat/config.yaml
   matcher/                Request matching engine (exact, glob, regex URI)
     matcher.go            Match logic, precedence scoring, sequence state
   proxy/                  Proxy capture server
@@ -219,7 +219,7 @@ coats:
 - Dedupe strategies: `overwrite` (stable filename), `skip`, `append`
 - Headers in `--strip-headers` are redacted from captures
 - Gzip-compressed upstream responses are decompressed for readability in captured coats
-- Redirect responses are captured as-is (client follows `http.ErrUseLastResponse`)
+- Redirect responses are captured as-is (client does not follow redirects and returns the 3xx response as-is via `http.ErrUseLastResponse`)
 
 ### Programmatic API (for Go tests)
 
@@ -261,7 +261,7 @@ See `docs/test-coverage-analysis.md` for detailed coverage data and test invento
 ## CI
 
 GitHub Actions workflow at `.github/workflows/ci.yaml` runs:
-- **Test**: `go test -v -count=1 -race -coverprofile` (uploads coverage artifact)
+- **Test**: `go test -v -count=1 -race -coverprofile=coverage.out` (uploads coverage artifact)
 - **Lint**: golangci-lint v2.10.1 via `golangci-lint-action`
 - **Vet**: `go vet`, `go mod tidy` check, `govulncheck`
 - **Format**: `gofmt -l`, `goimports -l` (fail if any files are unformatted)
