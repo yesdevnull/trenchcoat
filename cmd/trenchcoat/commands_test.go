@@ -796,6 +796,10 @@ func writeTestFile(t *testing.T, path, content string) {
 
 // freePort binds an ephemeral port, records it, and closes the listener.
 // The port is momentarily available for reuse — standard Go test pattern.
+// Note: there is a small race window where another process could bind the
+// port before the caller does. If this becomes flaky, the CLI should be
+// updated to expose the chosen port (e.g. via stdout) when started with
+// --port 0, allowing tests to discover it without this pattern.
 func freePort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -890,37 +894,45 @@ func newTLSClient(t *testing.T, certFile string) *http.Client {
 	}
 }
 
-// waitForTLS polls the given HTTPS URL until it responds or the timeout is reached.
+// waitForTLS polls the given HTTPS URL until it responds or the deadline is reached.
 func waitForTLS(t *testing.T, client *http.Client, url string) {
 	t.Helper()
+	deadline := time.After(5 * time.Second)
 	var lastErr error
-	for range 50 {
+	for {
 		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
 			return
 		}
 		lastErr = err
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-deadline:
+			t.Fatalf("TLS server not ready after 5s: %v", lastErr)
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
-	t.Fatalf("TLS server not ready after polling: %v", lastErr)
 }
 
-// waitForHTTP polls the given HTTP URL until it responds or the timeout is reached.
+// waitForHTTP polls the given HTTP URL until it responds or the deadline is reached.
 func waitForHTTP(t *testing.T, url string) {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.After(5 * time.Second)
 	var lastErr error
-	for range 50 {
+	for {
 		resp, err := client.Get(url)
 		if err == nil {
 			_ = resp.Body.Close()
 			return
 		}
 		lastErr = err
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-deadline:
+			t.Fatalf("HTTP server not ready after 5s: %v", lastErr)
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
-	t.Fatalf("HTTP server not ready after polling: %v", lastErr)
 }
 
 // signalAndWait sends a signal to a process and waits for it to exit with a timeout.
