@@ -127,7 +127,7 @@ jobs:
     needs: [test, lint, vet, format]
     strategy:
       matrix:
-        goos: [linux, darwin]
+        goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -146,13 +146,17 @@ jobs:
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then
+            EXT=".exe"
+          fi
           go build \
             -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
-            -o trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }} \
+            -o "trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" \
             ./cmd/trenchcoat/
 
       - name: Upload binary
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }}*

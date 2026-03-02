@@ -265,7 +265,7 @@ GitHub Actions workflow at `.github/workflows/ci.yaml` runs:
 - **Lint**: golangci-lint v2.10.1 via `golangci-lint-action`
 - **Vet**: `go vet`, `go mod tidy` check, `govulncheck`
 - **Format**: `gofmt -l`, `goimports -l` (fail if any files are unformatted)
-- **Build**: Cross-compile linux/darwin x amd64/arm64 with ldflags (depends on all other jobs)
+- **Build**: Cross-compile linux/darwin/windows x amd64/arm64 with ldflags (depends on all other jobs)
 
 Releases are configured via `.goreleaser.yaml` (tar.gz archives with checksums).
 
@@ -289,7 +289,7 @@ committing. Unformatted code must not be committed.
 - Use `net/http` directly — no web frameworks
 - Use `slog` for logging (text and JSON formats)
 - Distribute as a single static binary (CGO_ENABLED=0)
-- Support Linux and macOS
+- Support Linux, macOS, and Windows
 - Coat files must be human-readable and hand-editable
 - `body_file` paths resolve relative to the coat file's location
 - Graceful shutdown on SIGINT/SIGTERM with 10s drain timeout
