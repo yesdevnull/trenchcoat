@@ -56,7 +56,7 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 	return s
 }
 
-// extractCoats returns just the Coat values from a slice of LoadedCoats.
+// extractCoats returns just the Coat values from a slice of LoadedCoat.
 func extractCoats(loaded []coat.LoadedCoat) []coat.Coat {
 	coats := make([]coat.Coat, len(loaded))
 	for i, lc := range loaded {
@@ -68,19 +68,19 @@ func extractCoats(loaded []coat.LoadedCoat) []coat.Coat {
 // Start begins listening on the configured port. It returns the actual
 // address the server is listening on (useful for ephemeral ports).
 func (s *Server) Start(addr string) (string, error) {
-	return s.startListener(addr, func(ln net.Listener) error {
+	return s.startListener(addr, false, func(ln net.Listener) error {
 		return s.httpServer.Serve(ln)
 	})
 }
 
 // StartTLS begins listening with TLS on the configured address.
 func (s *Server) StartTLS(addr, certFile, keyFile string) (string, error) {
-	return s.startListener(addr, func(ln net.Listener) error {
+	return s.startListener(addr, true, func(ln net.Listener) error {
 		return s.httpServer.ServeTLS(ln, certFile, keyFile)
 	})
 }
 
-func (s *Server) startListener(addr string, serve func(net.Listener) error) (string, error) {
+func (s *Server) startListener(addr string, tls bool, serve func(net.Listener) error) (string, error) {
 	ln, err := net.Listen("tcp4", addr)
 	if err != nil {
 		return "", fmt.Errorf("failed to listen on %s: %w", addr, err)
@@ -89,7 +89,7 @@ func (s *Server) startListener(addr string, serve func(net.Listener) error) (str
 
 	go func() {
 		if err := serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.Error("server error", "error", err)
+			s.logger.Error("server error", "error", err, "tls", tls)
 		}
 	}()
 
