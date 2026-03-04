@@ -785,6 +785,253 @@ coats:
 	}
 }
 
+func TestWatchCoats_FileModificationTriggersReload(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "original"
+    request:
+      uri: "/original"
+    response:
+      code: 200
+      body: "original"
+`)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	loaded, _ := coat.LoadPaths([]string{dir})
+	srv := server.New(loaded, server.Config{Logger: logger})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// Verify original coat works.
+	resp, err := httpClient.Get(srv.URL() + "/original")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go watchCoats(ctx, logger, srv, []string{dir})
+
+	// Give the watcher time to start.
+	time.Sleep(100 * time.Millisecond)
+
+	// Modify the coat file — this should trigger a Write event and reload.
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "updated"
+    request:
+      uri: "/updated"
+    response:
+      code: 201
+      body: "updated"
+`)
+
+	// Wait for reload to propagate.
+	deadline := time.After(3 * time.Second)
+	for {
+		resp, err := httpClient.Get(srv.URL() + "/updated")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == 201 && string(body) == "updated" {
+			break // Reload happened successfully.
+		}
+		select {
+		case <-deadline:
+			t.Fatal("coat file modification did not trigger reload within 3s")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	// Original URI should now 404.
+	resp, err = httpClient.Get(srv.URL() + "/original")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404 for old coat after reload, got %d", resp.StatusCode)
+	}
+
+	cancel()
+}
+
+func TestWatchCoats_NonCoatFileIgnored(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "stable"
+    request:
+      uri: "/stable"
+    response:
+      code: 200
+      body: "stable"
+`)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	loaded, _ := coat.LoadPaths([]string{dir})
+	srv := server.New(loaded, server.Config{Logger: logger})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go watchCoats(ctx, logger, srv, []string{dir})
+	time.Sleep(100 * time.Millisecond)
+
+	// Write a non-coat file — should NOT trigger reload.
+	writeTestFile(t, filepath.Join(dir, "README.md"), "# not a coat")
+	time.Sleep(200 * time.Millisecond)
+
+	// The coat should still be working (no reload broke it).
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(srv.URL() + "/stable")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 || string(body) != "stable" {
+		t.Fatalf("expected stable response after non-coat file change, got %d %q", resp.StatusCode, body)
+	}
+
+	cancel()
+}
+
+func TestWatchCoats_CreateNewCoatFile(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "first"
+    request:
+      uri: "/first"
+    response:
+      code: 200
+      body: "first"
+`)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	loaded, _ := coat.LoadPaths([]string{dir})
+	srv := server.New(loaded, server.Config{Logger: logger})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go watchCoats(ctx, logger, srv, []string{dir})
+	time.Sleep(100 * time.Millisecond)
+
+	// Create a new coat file — triggers Create event.
+	writeTestFile(t, filepath.Join(dir, "second.yaml"), `
+coats:
+  - name: "second"
+    request:
+      uri: "/second"
+    response:
+      code: 202
+      body: "second"
+`)
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.After(3 * time.Second)
+	for {
+		resp, err := httpClient.Get(srv.URL() + "/second")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == 202 && string(body) == "second" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("new coat file creation did not trigger reload within 3s")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	cancel()
+}
+
+func TestWatchCoats_RemoveCoatFile(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "removable"
+    request:
+      uri: "/removable"
+    response:
+      code: 200
+      body: "here"
+`)
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	loaded, _ := coat.LoadPaths([]string{dir})
+	srv := server.New(loaded, server.Config{Logger: logger})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go watchCoats(ctx, logger, srv, []string{dir})
+	time.Sleep(100 * time.Millisecond)
+
+	// Remove the coat file — triggers Remove event.
+	if err := os.Remove(coatFile); err != nil {
+		t.Fatalf("failed to remove coat file: %v", err)
+	}
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.After(3 * time.Second)
+	for {
+		resp, err := httpClient.Get(srv.URL() + "/removable")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == 404 {
+			break // Reload happened, coat removed.
+		}
+		select {
+		case <-deadline:
+			t.Fatal("coat file removal did not trigger reload within 3s")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	cancel()
+}
+
 // --- helpers ---
 
 func writeTestFile(t *testing.T, path, content string) {
