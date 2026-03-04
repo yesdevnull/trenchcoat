@@ -3,27 +3,52 @@
 Analysis of the Trenchcoat test suite, run with Go 1.25.7 using
 `go test -race -coverprofile=coverage.out ./...`.
 
-## Current Coverage (after improvements)
+## Current Coverage
 
-**82 tests, all passing, race detector clean.**
+**82 tests, all passing, race detector clean. Overall: 89.1% of statements.**
 
-| Package | Before | After | Tests |
-|---------|--------|-------|-------|
-| `trenchcoat` (public API) | 0.0% | **92.6%** | 6 |
-| `cmd/trenchcoat` | 0.0% | **79.7%** | 20 |
-| `internal/coat` | 55.6% | **94.8%** | 36 |
-| `internal/config` | 88.9% | **88.9%** | 4 |
-| `internal/matcher` | 80.6% | **96.8%** | 31 |
-| `internal/proxy` | 79.0% | **87.4%** | 17 |
-| `internal/server` | 88.7% | **92.5%** | 23 |
+| Package | Coverage | Tests |
+|---------|----------|-------|
+| `trenchcoat` (public API) | **92.6%** | 6 |
+| `cmd/trenchcoat` | **75.2%** | 20 |
+| `internal/coat` | **96.4%** | 36 |
+| `internal/config` | **88.9%** | 4 |
+| `internal/matcher` | **96.6%** | 31 |
+| `internal/proxy` | **87.0%** | 17 |
+| `internal/server` | **94.0%** | 23 |
 
-All packages are now above 70% coverage.
+All packages are above 70% coverage.
 
 ---
 
-## Tests Added
+## Per-Function Coverage
 
-### `trenchcoat_test.go` (root package — 0% → 92.6%)
+Functions below 100% coverage, ordered by impact:
+
+| Function | Coverage | Notes |
+|----------|----------|-------|
+| `cmd/trenchcoat/main.go:main` | 0% | CLI entrypoint — cannot unit test |
+| `serve.go:watchCoats` | 48.4% | Most branches in event loop untested |
+| `proxy.go:singleJoiningSlash` | 66.7% | Missing branch coverage |
+| `proxy.go:shouldCapture` | 71.4% | Invalid filter pattern error path |
+| `proxy.go:Start` | 72.7% | Listen/mkdir error paths |
+| `server.go:startListener` | 75.0% | Listen error path |
+| `trenchcoat.go:Start` | 80.0% | Start error path |
+| `coat/query.go:UnmarshalYAML` | 80.0% | Missing invalid type branch |
+| `matcher.go:matchesURI` | 83.3% | Default case in switch |
+| `server.go:resolveBodyFile` | 83.3% | Ambiguity detection branch |
+| `proxy.go:handleRequest` | 85.0% | Some error paths |
+| `proxy.go:captureCoat` | 86.5% | Gzip decompression errors |
+| `proxy.go:New` | 87.0% | Some validation branches |
+| `config.go:Load` | 88.9% | Home dir discovery |
+| `matcher.go:betterThan` | 88.9% | Tie-breaking branch |
+| `serve.go:runServe` | 89.5% | Some error paths |
+
+---
+
+## Tests Inventory
+
+### `trenchcoat_test.go` (root package — 92.6%)
 
 - `TestWithCoat` — single coat, make request, assert response
 - `TestWithCoats` — multiple coats, verify both endpoints
@@ -32,7 +57,7 @@ All packages are now above 70% coverage.
 - `TestStop_BeforeStart` — call Stop() without Start(), no panic
 - `TestNewServer_NoOptions` — empty server constructor
 
-### `cmd/trenchcoat/commands_test.go` (0% → 79.7%)
+### `cmd/trenchcoat/commands_test.go` (75.2%)
 
 - Validate command: valid file, invalid file, non-existent file, directory, no args
 - `newLogger`: text, json, unknown (default)
@@ -40,63 +65,177 @@ All packages are now above 70% coverage.
 - Proxy command: invalid dedupe, no args, invalid upstream URL, start-and-stop, verbose mode
 - `watchCoats`: non-existent paths, with directory and file
 
-### `internal/coat/load_test.go` (load.go: 0% → covered)
+### `internal/coat/` (96.4%)
 
-- `TestLoadPaths_SingleFile` — single YAML file
-- `TestLoadPaths_Directory` — directory of YAML files
-- `TestLoadPaths_MixedFilesAndDirs` — file + directory together
-- `TestLoadPaths_NonExistentPath` — error for missing paths
-- `TestLoadPaths_ValidationErrors` — validation errors alongside valid coats
-- `TestLoadPaths_Empty` — empty input
-- `TestLoadPaths_SubdirSkipped` — subdirectories not recursed
+- YAML/JSON parsing, query string/map, responses plural, default method
+- File extension handling (.yaml, .yml, .json, unknown)
+- Validation: missing URI, both response/responses, neither, body/body_file, sequence rules
+- QueryField unmarshalling (YAML string/map, JSON string/map, error cases)
+- LoadPaths: single file, directory, mixed, non-existent, validation errors, empty, subdir skip
+- ValidationError formatting with/without name, invalid regex URI, malformed syntax
 
-### `internal/coat/validate_test.go` (error paths)
+### `internal/config/` (88.9%)
 
-- `TestValidationError_Error_WithName` / `_WithoutName` — error formatting
-- `TestValidate_InvalidRegexURI` — invalid regex URI validation
-- `TestParseYAML_MalformedSyntax` / `TestParseJSON_MalformedSyntax` — parse error paths
-- `TestParseFile_NonExistent` / `_NonExistentJSON` — missing file errors
-- `TestQueryField_UnmarshalJSON_InvalidType` — invalid JSON type for query
+- Explicit config path, no config file, CWD config, nested config structure
 
-### `internal/matcher/sequence_test.go` (Match: 58.3% → covered)
+### `internal/matcher/` (96.6%)
 
-- `TestMatch_Sequence_Cycle` — cycle through responses
-- `TestMatch_Sequence_Once_Exhausted` — once sequence exhaustion
-- `TestMatch_Sequence_DefaultCycle` — default sequence is cycle
-- `TestMatch_ResetSequences` — reset counter to 0
-- `TestNew_InvalidRegexSkipped` — bad regex coat skipped, good coats still work
-- `TestMatch_EmptyMatcher` — nil coats returns nil match
-- `TestMatch_ConcurrentSequences` — 100 goroutines, no data race
-- `TestMatch_SingularResponse` — singular Response field (not Responses)
+- Exact/glob/regex URI matching, method+ANY, header globs, query matching, precedence
+- Sequences: cycle, once, default cycle, reset, concurrent access (100 goroutines)
+- Invalid regex skipped, empty matcher, singular response
 
-### `internal/proxy/proxy_validation_test.go` (New: 61.1% → covered)
+### `internal/proxy/` (87.0%)
 
-- `TestProxy_New_EmptyURL` / `_InvalidScheme` / `_MissingHost` — validation errors
-- `TestProxy_Addr_BeforeStart` — empty address before start
-- `TestProxy_ForwardsRequestBody` — POST body forwarding
-- `TestProxy_CapturesQueryString` — query string in captured coat
-- `TestProxy_UpstreamUnreachable` — 502 for unreachable upstream
-- `TestProxy_Dedupe_Overwrite` — overwrite deduplication
-- `TestProxy_Verbose` — verbose logging mode
+- Request forwarding, response relay, POST body forwarding, header stripping
+- Query string capture, coat file capture, overwrite dedup
+- Upstream unreachable (502), verbose logging, gzip decompression
+- Validation: empty URL, invalid scheme, missing host, addr before start
 
-### `internal/server/verbose_test.go` (logRequest: 50% → covered)
+### `internal/server/` (94.0%)
 
-- `TestServe_VerboseLogging` — verbose logging for matched and unmatched requests
-- `TestServe_EmptyBody` — 204 with no body
-- `TestServe_Addr_BeforeStart` — empty address before start
-- `TestServe_BodyFile_AbsolutePath` — absolute path for body_file
+- Response bodies, headers, 404s, status codes, glob/regex, delays
+- BodyFile resolution (relative + absolute), missing body_file (500)
+- Verbose logging, empty body (204), addr before start
+- Hot reload, sequence reset on reload, TLS connectivity
 
 ---
 
-## Remaining Gaps
+## Proposed Improvements
 
-These areas still have room for improvement but are all above the 70% threshold:
+### Priority 1: High Impact — Untested Core Logic
 
-| Area | Current | Notes |
-|------|---------|-------|
-| `cmd/trenchcoat/main.go` (`main`) | 0% | CLI entrypoint — hard to unit test |
-| `internal/config` home dir discovery | 88.9% | Edge case, low impact |
-| `proxy.Start` listen/mkdir errors | ~75% | Hard to trigger in tests |
-| `server.Start`/`StartTLS` listen errors | ~75% | Hard to trigger in tests |
-| `proxy.shouldCapture` invalid filter | ~71% | Edge case |
-| `proxy.singleJoiningSlash` all branches | ~67% | Low impact utility |
+#### 1. Proxy dedup modes: `skip` and `append` (proxy.go:344-358)
+
+Only `overwrite` dedup is tested. The `skip` and `append` branches in
+`generateFilename` are completely untested. These are user-facing features
+with distinct behavior:
+
+- **`skip`**: Uses `filepath.Glob` to check for existing files; returns `""`
+  to signal skipping. Should verify that: (a) first capture writes a file,
+  (b) second capture of the same route is skipped, (c) different routes are
+  still captured.
+- **`append`**: Uses an internal counter map to generate unique filenames.
+  Should verify that: (a) first capture uses a base filename, (b) subsequent
+  captures append an incrementing counter, (c) different routes maintain
+  independent counters.
+
+#### 2. `watchCoats` event loop (serve.go:104-156, currently 48.4%)
+
+The file watcher's event loop is the lowest-covered non-main function. Key
+untested branches:
+
+- **Write/Create events on a coat file** — verify that `srv.Reload` is called
+  with newly loaded coats when a `.yaml` file is modified.
+- **Remove events** — verify reload triggers when a coat file is deleted.
+- **Non-coat file changes** — verify that changes to non-`.yaml`/`.json` files
+  are ignored (the `IsCoatFile` guard).
+- **Watcher error channel** — verify that errors from `watcher.Errors` are
+  logged and don't crash the watcher.
+- **Load errors during reload** — verify that validation errors during reload
+  are logged as warnings and the server continues operating.
+
+#### 3. `resolveBodyFile` ambiguity detection (server.go:247-270, 83.3%)
+
+The function attempts to detect which coat file a `body_file` is relative to
+when multiple coat files define coats with the same name/URI/method. The
+ambiguity branch is not directly tested. Should verify:
+
+- Two coat files with the same coat name/URI/method but different `body_file`
+  values — the function should fall back and not resolve the file.
+- Single coat with `body_file` across multiple files — no ambiguity, resolves
+  correctly.
+
+### Priority 2: Medium Impact — Error Paths and Edge Cases
+
+#### 4. Gzip decompression errors in proxy capture (proxy.go:258-271)
+
+Two error branches in `captureCoat` are untested:
+
+- `gzip.NewReader` returns an error (e.g. response claims gzip but body is
+  not valid gzip data).
+- `io.ReadAll` on the gzip reader fails mid-stream.
+
+Both should log errors and fall back to writing the raw (compressed) body.
+
+#### 5. `shouldCapture` with invalid filter pattern (proxy.go:242-251, 71.4%)
+
+When the `--filter` glob pattern is malformed (e.g. contains `[` without
+closing `]`), `path.Match` returns an error. The function logs it and returns
+`false`. This error path is not tested.
+
+#### 6. `singleJoiningSlash` branch coverage (proxy.go:395-404, 66.7%)
+
+This utility function has four branches for combining paths with/without
+trailing/leading slashes. Only two branches are exercised. Add table-driven
+tests covering all four combinations:
+
+- `a/` + `/b` → `a/b` (both slashes — trim one)
+- `a/` + `b` → `a/b` (only a has slash)
+- `a` + `/b` → `a/b` (only b has slash)
+- `a` + `b` → `a/b` (neither has slash — add one)
+
+#### 7. Query matching edge cases (matcher.go:275-307)
+
+- Multiple values for the same query param (e.g. `?tag=a&tag=b`): the matcher
+  uses `r.URL.Query().Get()` which returns the first value. There's no test
+  confirming this behavior.
+- Query params with special characters in values (URL-encoded chars).
+- Glob patterns in query value matching (e.g. `page: "*"`).
+
+#### 8. Matcher precedence tie-breaking (matcher.go:216-235, 88.9%)
+
+The `betterThan` function has a branch for equal scores + equal URI mode that
+falls through to file-order precedence. This tie-breaking path is not
+exercised by any test.
+
+### Priority 3: Lower Impact — Hardening and Completeness
+
+#### 9. Config file parsing errors (config.go)
+
+No test covers what happens when a config file exists but contains invalid
+YAML. Viper's behavior in this case should be verified (error returned vs
+silent ignore).
+
+#### 10. Public API with invalid coat files
+
+`WithCoatFile` with a non-existent file or a file containing validation errors
+— verify that errors are surfaced or handled gracefully. Currently the errors
+from `LoadPaths` are stored but the public API's behavior is untested.
+
+#### 11. Server with no coats handling requests
+
+`NewServer()` with no options, then making HTTP requests — verify consistent
+404 behavior with the expected JSON error body.
+
+#### 12. Proxy redirect handling
+
+The proxy uses `http.ErrUseLastResponse` to prevent following redirects, but
+there are no tests verifying that 3xx responses are captured and relayed
+as-is to the client.
+
+#### 13. Concurrent requests during server reload
+
+No test verifies correct behavior when requests arrive while `Reload` is
+in progress. The server uses `sync.RWMutex` for this — a test should confirm
+no races and that requests either see the old or new coats (never a partial
+state).
+
+---
+
+## Summary
+
+| Priority | Area | Estimated Tests | Impact |
+|----------|------|-----------------|--------|
+| P1 | Proxy `skip`/`append` dedup | 4-6 | Core feature, zero coverage |
+| P1 | `watchCoats` event loop | 4-5 | 48.4% coverage, core hot-reload |
+| P1 | `resolveBodyFile` ambiguity | 2-3 | Correctness risk |
+| P2 | Gzip decompression errors | 2 | Error resilience |
+| P2 | `shouldCapture` invalid filter | 1 | Error path |
+| P2 | `singleJoiningSlash` branches | 1 (table) | Low-risk utility |
+| P2 | Query matching edge cases | 3-4 | Subtle matching bugs |
+| P2 | Matcher `betterThan` tie-break | 1-2 | Precedence correctness |
+| P3 | Config parsing errors | 1-2 | Hardening |
+| P3 | Public API error handling | 2 | API robustness |
+| P3 | Server no-coats requests | 1 | Completeness |
+| P3 | Proxy redirect capture | 1-2 | Documented behavior |
+| P3 | Concurrent reload correctness | 1-2 | Race safety |
