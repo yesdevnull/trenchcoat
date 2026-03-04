@@ -1,6 +1,7 @@
 package trenchcoat
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -199,5 +200,60 @@ func TestWithCoat_BodyMatching(t *testing.T) {
 	}
 	if string(body2) != "bob created" {
 		t.Fatalf("expected 'bob created', got %q", body2)
+	}
+}
+
+func TestNewServer_NoCoats_Returns404(t *testing.T) {
+	srv := NewServer()
+	srv.Start(t)
+
+	resp, err := httpClient.Get(srv.URL + "/anything")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+	var errResp map[string]string
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		t.Fatalf("expected JSON error body, got: %s", body)
+	}
+	if _, ok := errResp["error"]; !ok {
+		t.Fatalf("expected 'error' key in JSON response, got: %s", body)
+	}
+}
+
+func TestWithCoatFile_NonExistent(t *testing.T) {
+	srv := NewServer(WithCoatFile("/nonexistent/path/coat.yaml"))
+	if len(srv.loadErrs) == 0 {
+		t.Fatal("expected load errors for non-existent coat file")
+	}
+}
+
+func TestWithCoatFile_InvalidCoat(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "bad.yaml")
+	// Coat without a URI — should fail validation.
+	content := `
+coats:
+  - name: "missing-uri"
+    response:
+      code: 200
+      body: "oops"
+`
+	if err := os.WriteFile(coatFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(WithCoatFile(coatFile))
+	if len(srv.loadErrs) == 0 {
+		t.Fatal("expected validation errors for coat without URI")
 	}
 }
