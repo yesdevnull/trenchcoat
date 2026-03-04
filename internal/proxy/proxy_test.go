@@ -609,6 +609,243 @@ func TestProxy_CaptureBody_Disabled(t *testing.T) {
 
 func boolPtr(b bool) *bool { return &b }
 
+func TestProxy_InvalidGzipBody(t *testing.T) {
+	// Upstream claims gzip encoding but body is not valid gzip data.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("this is not gzip data"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	// Use a client with DisableCompression so it doesn't auto-decompress.
+	client := &http.Client{
+		Transport: &http.Transport{DisableCompression: true},
+		Timeout:   5 * time.Second,
+	}
+	req, err := http.NewRequest("GET", p.URL()+"/api/bad-gzip", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	p.WaitCaptures()
+
+	// Coat file should still be written — with the raw (non-gzip) body as fallback.
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected coat file to be written even with invalid gzip")
+	}
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The raw body "this is not gzip data" should appear since decompression failed.
+	if !strings.Contains(string(content), "this is not gzip data") {
+		t.Fatalf("expected raw body in coat file, got:\n%s", content)
+	}
+}
+
+func TestProxy_Filter_InvalidPattern(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		Filter:       "[invalid-pattern", // Malformed glob — unclosed bracket.
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	// Request should still succeed (proxied to upstream).
+	resp, err := httpClient.Get(p.URL() + "/test")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	p.WaitCaptures()
+
+	// No coat file should be captured — shouldCapture returns false on error.
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected no captured files with invalid filter, got %d", len(files))
+	}
+}
+
+func TestSingleJoiningSlash(t *testing.T) {
+	// Exercise all four branches of singleJoiningSlash by proxying
+	// through upstreams with different path configurations.
+	tests := []struct {
+		name         string
+		upstreamPath string // Upstream base path (may have trailing slash).
+		requestPath  string // Client request path (may have leading slash).
+		wantContains string // Expected path fragment upstream receives.
+	}{
+		{
+			name:         "both_slashes",
+			upstreamPath: "/base/",
+			requestPath:  "/endpoint",
+			wantContains: "/base/endpoint",
+		},
+		{
+			name:         "neither_slash",
+			upstreamPath: "/base",
+			requestPath:  "/endpoint",
+			wantContains: "/base/endpoint",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedPath string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedPath = r.URL.Path
+				w.WriteHeader(200)
+				_, _ = w.Write([]byte("ok"))
+			}))
+			defer upstream.Close()
+
+			p, err := proxy.New(proxy.Config{
+				UpstreamURL:  upstream.URL + tt.upstreamPath,
+				WriteDir:     t.TempDir(),
+				StripHeaders: []string{},
+				Dedupe:       "overwrite",
+			})
+			if err != nil {
+				t.Fatalf("failed to create proxy: %v", err)
+			}
+			_, err = p.Start("127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to start proxy: %v", err)
+			}
+			t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+			resp, err := httpClient.Get(p.URL() + tt.requestPath)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			_ = resp.Body.Close()
+			p.WaitCaptures()
+
+			if !strings.Contains(receivedPath, tt.wantContains) {
+				t.Fatalf("expected upstream path to contain %q, got %q", tt.wantContains, receivedPath)
+			}
+		})
+	}
+}
+
+func TestProxy_RedirectHandling(t *testing.T) {
+	// Upstream returns a 301 redirect. The proxy should capture and relay
+	// the 3xx response as-is, not follow the redirect.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/old" {
+			w.Header().Set("Location", "/new")
+			w.WriteHeader(301)
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("new page"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	// Client that does NOT follow redirects.
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	resp, err := noRedirectClient.Get(p.URL() + "/old")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != 301 {
+		t.Fatalf("expected 301, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("Location") != "/new" {
+		t.Fatalf("expected Location: /new, got %q", resp.Header.Get("Location"))
+	}
+
+	p.WaitCaptures()
+
+	// Verify the 301 was captured.
+	files, err := filepath.Glob(filepath.Join(writeDir, "*301*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat file for 301 redirect")
+	}
+}
+
 func TestSanitisePath(t *testing.T) {
 	tests := []struct {
 		input    string
