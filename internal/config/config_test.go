@@ -70,6 +70,44 @@ func TestLoad_CwdConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_InvalidYAML(t *testing.T) {
+	viper.Reset()
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgFile, []byte("invalid: yaml: [unterminated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.Load(cfgFile)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML config file")
+	}
+}
+
+func TestLoad_CwdConfig_YmlExtension(t *testing.T) {
+	viper.Reset()
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, ".trenchcoat.yml")
+	if err := os.WriteFile(cfgFile, []byte("port: 4000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	err := config.Load("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if viper.GetInt("port") != 4000 {
+		t.Fatalf("expected port 4000, got %d", viper.GetInt("port"))
+	}
+}
+
 func TestLoad_NestedConfig(t *testing.T) {
 	viper.Reset()
 	dir := t.TempDir()
