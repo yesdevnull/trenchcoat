@@ -500,6 +500,93 @@ func TestServe_Sequence_DefaultCycle(t *testing.T) {
 	assertEqual(t, "third (cycle)", "a", readBody(t, resp3))
 }
 
+// --- resolveBodyFile ambiguity tests ---
+
+func TestServe_BodyFile_AmbiguousCoatSources(t *testing.T) {
+	// Two coat files define a coat with the same name/URI/method but different
+	// file paths. resolveBodyFile should detect the ambiguity and return 500.
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	// Create body files in both directories.
+	if err := os.WriteFile(filepath.Join(dirA, "data.json"), []byte(`{"from": "A"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirB, "data.json"), []byte(`{"from": "B"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			FilePath: filepath.Join(dirA, "coat.yaml"),
+			Coat: coat.Coat{
+				Name:     "ambiguous",
+				Request:  coat.Request{Method: "GET", URI: "/data"},
+				Response: &coat.Response{Code: 200, BodyFile: "data.json"},
+			},
+		},
+		{
+			FilePath: filepath.Join(dirB, "coat.yaml"),
+			Coat: coat.Coat{
+				Name:     "ambiguous",
+				Request:  coat.Request{Method: "GET", URI: "/data"},
+				Response: &coat.Response{Code: 200, BodyFile: "data.json"},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/data")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	assertEqual(t, "status", 500, resp.StatusCode)
+
+	var errBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errBody); err != nil {
+		t.Fatalf("failed to decode error body: %v", err)
+	}
+	assertEqual(t, "error", "body_file not found", errBody["error"])
+}
+
+func TestServe_BodyFile_SameCoatFilePath_NoAmbiguity(t *testing.T) {
+	// Two coats from the same file path — no ambiguity, resolves correctly.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"ok": true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	coatFilePath := filepath.Join(dir, "coat.yaml")
+
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			FilePath: coatFilePath,
+			Coat: coat.Coat{
+				Name:     "same-source",
+				Request:  coat.Request{Method: "GET", URI: "/data"},
+				Response: &coat.Response{Code: 200, BodyFile: "data.json"},
+			},
+		},
+		{
+			FilePath: coatFilePath,
+			Coat: coat.Coat{
+				Name:     "same-source",
+				Request:  coat.Request{Method: "GET", URI: "/data"},
+				Response: &coat.Response{Code: 200, BodyFile: "data.json"},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/data")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"ok": true}`, readBody(t, resp))
+}
+
 // --- Helpers ---
 
 func startServer(t *testing.T, coats []coat.LoadedCoat) *server.Server {
