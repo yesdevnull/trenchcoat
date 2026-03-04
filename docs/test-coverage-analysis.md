@@ -5,19 +5,19 @@ Analysis of the Trenchcoat test suite, run with Go 1.25.7 using
 
 ## Current Coverage
 
-**82 tests, all passing, race detector clean. Overall: 89.1% of statements.**
+**102 tests, all passing, race detector clean. Overall: 91.4% of statements.**
 
-| Package | Coverage | Tests |
-|---------|----------|-------|
-| `trenchcoat` (public API) | **92.6%** | 6 |
-| `cmd/trenchcoat` | **75.2%** | 20 |
-| `internal/coat` | **96.4%** | 36 |
-| `internal/config` | **88.9%** | 4 |
-| `internal/matcher` | **96.6%** | 31 |
-| `internal/proxy` | **87.0%** | 17 |
-| `internal/server` | **94.0%** | 23 |
+| Package | Coverage | Tests | Change |
+|---------|----------|-------|--------|
+| `trenchcoat` (public API) | **92.6%** | 9 | +3 |
+| `cmd/trenchcoat` | **80.3%** | 24 | +4 |
+| `internal/coat` | **96.4%** | 36 | — |
+| `internal/config` | **88.9%** | 6 | +2 |
+| `internal/matcher` | **96.6%** | 36 | +5 |
+| `internal/proxy` | **90.1%** | 21 | +4 |
+| `internal/server` | **97.0%** | 26 | +3 |
 
-All packages are above 70% coverage.
+All packages are above 80% coverage. Overall coverage improved from 89.1% → 91.4%.
 
 ---
 
@@ -56,14 +56,21 @@ Functions below 100% coverage, ordered by impact:
 - `TestWithVerbose` — verify verbose option propagates
 - `TestStop_BeforeStart` — call Stop() without Start(), no panic
 - `TestNewServer_NoOptions` — empty server constructor
+- `TestNewServer_NoCoats_Returns404` — no coats → 404 with JSON error body
+- `TestWithCoatFile_NonExistent` — non-existent file → load errors
+- `TestWithCoatFile_InvalidCoat` — coat without URI → validation errors
 
-### `cmd/trenchcoat/commands_test.go` (75.2%)
+### `cmd/trenchcoat/commands_test.go` (80.3%)
 
 - Validate command: valid file, invalid file, non-existent file, directory, no args
 - `newLogger`: text, json, unknown (default)
 - Serve command: TLS cert without key, TLS key without cert, no coats, with coats, with watch
 - Proxy command: invalid dedupe, no args, invalid upstream URL, start-and-stop, verbose mode
 - `watchCoats`: non-existent paths, with directory and file
+- `TestWatchCoats_FileModificationTriggersReload` — modify coat file triggers reload
+- `TestWatchCoats_NonCoatFileIgnored` — non-coat file changes ignored
+- `TestWatchCoats_CreateNewCoatFile` — new coat file picked up
+- `TestWatchCoats_RemoveCoatFile` — removed coat file triggers reload
 
 ### `internal/coat/` (96.4%)
 
@@ -77,26 +84,43 @@ Functions below 100% coverage, ordered by impact:
 ### `internal/config/` (88.9%)
 
 - Explicit config path, no config file, CWD config, nested config structure
+- `TestLoad_InvalidYAML` — malformed YAML returns error
+- `TestLoad_CwdConfig_YmlExtension` — `.trenchcoat.yml` discovered in CWD
 
 ### `internal/matcher/` (96.6%)
 
 - Exact/glob/regex URI matching, method+ANY, header globs, query matching, precedence
 - Sequences: cycle, once, default cycle, reset, concurrent access (100 goroutines)
 - Invalid regex skipped, empty matcher, singular response
+- `TestMatch_Precedence_GlobSameLiteralLen_FileOrder` — glob tie-breaking by file order
+- `TestMatch_Precedence_GlobMethodANY_vs_Specific` — ANY vs specific method with globs
+- `TestMatch_QueryMap_GlobValues` — query value glob patterns
+- `TestMatch_QueryMap_MultipleValues` — repeated query params
+- `TestMatch_QueryMap_SpecialChars` — URL-encoded query values
 
-### `internal/proxy/` (87.0%)
+### `internal/proxy/` (90.1%)
 
 - Request forwarding, response relay, POST body forwarding, header stripping
 - Query string capture, coat file capture, overwrite dedup
 - Upstream unreachable (502), verbose logging, gzip decompression
 - Validation: empty URL, invalid scheme, missing host, addr before start
+- `TestProxy_InvalidGzipBody` — invalid gzip fallback to raw body
+- `TestProxy_Filter_InvalidPattern` — malformed glob filter handled gracefully
+- `TestSingleJoiningSlash` — full branch coverage for path joining
+- `TestProxy_RedirectHandling` — 3xx responses captured and relayed as-is
 
-### `internal/server/` (94.0%)
+### `internal/server/` (97.0%)
 
 - Response bodies, headers, 404s, status codes, glob/regex, delays
 - BodyFile resolution (relative + absolute), missing body_file (500)
 - Verbose logging, empty body (204), addr before start
 - Hot reload, sequence reset on reload, TLS connectivity
+- `TestServe_BodyFile_AmbiguousCoatSources` — ambiguous body_file detection
+- `TestServe_BodyFile_SameCoatFilePath_NoAmbiguity` — same source, no ambiguity
+- `TestServe_TLS_CorruptKeyFile` — garbage PEM key data
+- `TestServe_TLS_MismatchedCertAndKey` — cert/key from different keypairs
+- `TestServe_TLS_ExpiredCert` — expired cert rejected, server stays running
+- `TestServe_Reload_ConcurrentRequests` — concurrent requests during reload (race-safe)
 
 ---
 
