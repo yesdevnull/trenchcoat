@@ -145,9 +145,82 @@ ambiguity branch is not directly tested. Should verify:
 - Single coat with `body_file` across multiple files — no ambiguity, resolves
   correctly.
 
-### Priority 2: Medium Impact — Error Paths and Edge Cases
+### Priority 2: Medium Impact — Error Paths, Edge Cases, and TLS
 
-#### 4. Gzip decompression errors in proxy capture (proxy.go:258-271)
+#### 4. TLS configuration and error handling
+
+TLS is currently tested only on the happy path (valid self-signed cert →
+successful HTTPS request). Several important scenarios are missing:
+
+**a. Invalid or mismatched cert/key files (server.go:77-80)**
+
+`StartTLS` delegates to `http.Server.ServeTLS` which validates the cert/key
+pair. The server goroutine logs the error but no test verifies the behavior:
+
+- **Mismatched cert and key** — the cert was generated with a different key
+  than the one provided. `ServeTLS` returns an error immediately. Verify
+  the server fails to start or logs the mismatch error.
+- **Corrupt PEM file** — a key file containing garbage data. Verify the error
+  is surfaced.
+- **Wrong PEM type** — e.g. a certificate file provided as the key argument
+  and vice versa.
+
+**b. Expired certificate handling**
+
+Generate a cert with `NotAfter` in the past. The server will start (Go only
+validates on handshake), but clients should receive a TLS handshake error.
+Test that:
+
+- The server starts without error.
+- An HTTPS request from a client that checks expiry (default behavior)
+  returns a `tls.CertificateExpiredError` or equivalent.
+- The server itself remains running (doesn't crash).
+
+**c. TLS via the public API (`trenchcoat.go`)**
+
+The public `Server` type has no TLS support — there is no `StartTLS` method
+or `WithTLS` option. This means Go test suites using the programmatic API
+cannot test HTTPS endpoints. Proposed additions:
+
+- `WithTLS(certFile, keyFile string) Option` — configure TLS cert/key.
+- Modify `Start(t)` to call `inner.StartTLS` when TLS is configured, and
+  set `s.URL` to `https://...`.
+- Alternatively, a simpler `WithSelfSignedTLS() Option` that generates an
+  ephemeral self-signed cert at startup (useful for tests that just need
+  HTTPS without caring about specific certs).
+- Tests:
+  - `TestWithTLS` — start server with TLS, make HTTPS request, verify body.
+  - `TestWithSelfSignedTLS` — same, using auto-generated cert.
+  - `TestStartTLS_InvalidCert` — verify `t.Fatal` is called on bad cert.
+
+**d. TLS minimum version enforcement**
+
+The server currently uses Go's default TLS config, which allows TLS 1.0+.
+For security hardening, the server should enforce a minimum TLS version
+(e.g. TLS 1.2). Test that:
+
+- A TLS 1.2 client connects successfully.
+- A TLS 1.1 client (if configured with `tls.Config{MaxVersion: tls.VersionTLS11}`)
+  is rejected with a handshake error.
+
+**e. Proxy mode TLS listener**
+
+The proxy server (`internal/proxy`) only supports plain HTTP for its
+listener. If the proxy itself should serve over HTTPS (e.g. for HTTPS proxy
+testing), this is a feature gap rather than a test gap. At minimum, document
+this limitation or add a `StartTLS` method to `Proxy`.
+
+**f. CLI `--tls-cert`/`--tls-key` with non-existent files**
+
+The CLI validates that both flags are provided together, but doesn't
+validate that the files exist before passing them to `StartTLS`. A test
+should verify that:
+
+- `trenchcoat serve --tls-cert /nonexistent --tls-key /nonexistent` returns
+  a clear error (currently fails inside `ServeTLS`).
+- The error message includes the file path for debuggability.
+
+#### 5. Gzip decompression errors in proxy capture (proxy.go:258-271)
 
 Two error branches in `captureCoat` are untested:
 
@@ -229,6 +302,11 @@ state).
 | P1 | Proxy `skip`/`append` dedup | 4-6 | Core feature, zero coverage |
 | P1 | `watchCoats` event loop | 4-5 | 48.4% coverage, core hot-reload |
 | P1 | `resolveBodyFile` ambiguity | 2-3 | Correctness risk |
+| P2 | TLS invalid/mismatched cert+key | 3-4 | Error resilience, security |
+| P2 | TLS expired certificate | 2 | Security correctness |
+| P2 | TLS in public API (`WithTLS`) | 3-4 | Feature gap, API completeness |
+| P2 | TLS minimum version enforcement | 2 | Security hardening |
+| P2 | CLI `--tls-*` with missing files | 1-2 | Error UX |
 | P2 | Gzip decompression errors | 2 | Error resilience |
 | P2 | `shouldCapture` invalid filter | 1 | Error path |
 | P2 | `singleJoiningSlash` branches | 1 (table) | Low-risk utility |
@@ -239,3 +317,4 @@ state).
 | P3 | Server no-coats requests | 1 | Completeness |
 | P3 | Proxy redirect capture | 1-2 | Documented behavior |
 | P3 | Concurrent reload correctness | 1-2 | Race safety |
+| P3 | Proxy TLS listener | 1-2 | Feature gap documentation |
