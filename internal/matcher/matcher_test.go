@@ -465,6 +465,137 @@ func TestMatch_Precedence_FileOrderTieBreaker(t *testing.T) {
 	assertEqual(t, "name", "first", result.Name)
 }
 
+func TestMatch_Precedence_GlobSameLiteralLen_FileOrder(t *testing.T) {
+	// Two glob URIs with identical literal prefix length — tie-breaks by file order.
+	coats := []coat.Coat{
+		{
+			Name:     "first-glob",
+			Request:  coat.Request{Method: "GET", URI: "/api/v1/*"},
+			Response: &coat.Response{Code: 200},
+		},
+		{
+			Name:     "second-glob",
+			Request:  coat.Request{Method: "GET", URI: "/api/v2/*"},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	// /api/v1/x only matches first-glob.
+	req := newRequest(t, "GET", "/api/v1/x", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	assertEqual(t, "name", "first-glob", result.Name)
+}
+
+func TestMatch_Precedence_GlobMethodANY_vs_Specific(t *testing.T) {
+	// Two globs with same URI pattern — specific method beats ANY.
+	coats := []coat.Coat{
+		{
+			Name:     "any-glob",
+			Request:  coat.Request{Method: "ANY", URI: "/api/*"},
+			Response: &coat.Response{Code: 200},
+		},
+		{
+			Name:     "get-glob",
+			Request:  coat.Request{Method: "GET", URI: "/api/*"},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/test", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	assertEqual(t, "name", "get-glob", result.Name)
+
+	// POST should fall back to ANY.
+	req = newRequest(t, "POST", "/api/test", nil)
+	result = m.Match(req)
+	if result == nil {
+		t.Fatal("expected a match for POST via ANY")
+	}
+	assertEqual(t, "name", "any-glob", result.Name)
+}
+
+// --- Query matching edge cases ---
+
+func TestMatch_QueryMap_GlobValues(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "glob-query",
+			Request: coat.Request{
+				Method: "GET",
+				URI:    "/search",
+				Query:  &coat.QueryField{Map: map[string]string{"page": "*"}},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/search?page=42", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match — glob * should match any value")
+	}
+
+	req = newRequest(t, "GET", "/search?page=anything-goes", nil)
+	result = m.Match(req)
+	if result == nil {
+		t.Fatal("expected match — glob * should match any value")
+	}
+}
+
+func TestMatch_QueryMap_MultipleValues(t *testing.T) {
+	// When query has multiple values for same key (?tag=a&tag=b),
+	// match should succeed if any value matches the pattern.
+	coats := []coat.Coat{
+		{
+			Name: "multi-value",
+			Request: coat.Request{
+				Method: "GET",
+				URI:    "/filter",
+				Query:  &coat.QueryField{Map: map[string]string{"tag": "b"}},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/filter?tag=a&tag=b", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match — second value 'b' should match")
+	}
+}
+
+func TestMatch_QueryMap_SpecialChars(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "encoded-query",
+			Request: coat.Request{
+				Method: "GET",
+				URI:    "/search",
+				Query:  &coat.QueryField{Map: map[string]string{"q": "hello world"}},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	// URL-encoded space: q=hello%20world.
+	req := newRequest(t, "GET", "/search?q=hello%20world", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match — URL-decoded value should match")
+	}
+}
+
 // --- Double-slash (protocol-in-path) URI matching ---
 
 func TestMatch_ExactURI_DoubleSlash(t *testing.T) {
