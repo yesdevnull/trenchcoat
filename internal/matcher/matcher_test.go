@@ -530,7 +530,7 @@ func TestMatch_BodyExact(t *testing.T) {
 			Request: coat.Request{
 				Method: "POST",
 				URI:    "/api/v1/users",
-				Body:   `{"name": "alice"}`,
+				Body:   coat.StringPtr(`{"name": "alice"}`),
 			},
 			Response: &coat.Response{Code: 201},
 		},
@@ -552,7 +552,7 @@ func TestMatch_BodyMismatch(t *testing.T) {
 			Request: coat.Request{
 				Method: "POST",
 				URI:    "/api/v1/users",
-				Body:   `{"name": "alice"}`,
+				Body:   coat.StringPtr(`{"name": "alice"}`),
 			},
 			Response: &coat.Response{Code: 201},
 		},
@@ -601,7 +601,7 @@ func TestMatch_Precedence_BodySpecificityWins(t *testing.T) {
 			Request: coat.Request{
 				Method: "POST",
 				URI:    "/api/v1/users",
-				Body:   `{"name": "alice"}`,
+				Body:   coat.StringPtr(`{"name": "alice"}`),
 			},
 			Response: &coat.Response{Code: 201},
 		},
@@ -623,7 +623,7 @@ func TestMatch_DifferentBodies_DifferentCoats(t *testing.T) {
 			Request: coat.Request{
 				Method: "POST",
 				URI:    "/api/v1/users",
-				Body:   `{"name": "alice"}`,
+				Body:   coat.StringPtr(`{"name": "alice"}`),
 			},
 			Response: &coat.Response{Code: 201, Body: "alice created"},
 		},
@@ -632,7 +632,7 @@ func TestMatch_DifferentBodies_DifferentCoats(t *testing.T) {
 			Request: coat.Request{
 				Method: "POST",
 				URI:    "/api/v1/users",
-				Body:   `{"name": "bob"}`,
+				Body:   coat.StringPtr(`{"name": "bob"}`),
 			},
 			Response: &coat.Response{Code: 201, Body: "bob created"},
 		},

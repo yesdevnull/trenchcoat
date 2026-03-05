@@ -135,8 +135,8 @@ func TestParseYAML_RequestBody(t *testing.T) {
 	if len(f.Coats) != 1 {
 		t.Fatalf("expected 1 coat, got %d", len(f.Coats))
 	}
-	if f.Coats[0].Request.Body != `{"name": "alice"}` {
-		t.Fatalf("expected request body, got %q", f.Coats[0].Request.Body)
+	if f.Coats[0].Request.Body == nil || *f.Coats[0].Request.Body != `{"name": "alice"}` {
+		t.Fatalf("expected request body %q, got %v", `{"name": "alice"}`, f.Coats[0].Request.Body)
 	}
 }
 
@@ -152,7 +152,7 @@ func TestParseJSON_RequestBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse: %v", err)
 	}
-	if f.Coats[0].Request.Body != "hello" {
-		t.Fatalf("expected request body 'hello', got %q", f.Coats[0].Request.Body)
+	if f.Coats[0].Request.Body == nil || *f.Coats[0].Request.Body != "hello" {
+		t.Fatalf("expected request body 'hello', got %v", f.Coats[0].Request.Body)
 	}
 }

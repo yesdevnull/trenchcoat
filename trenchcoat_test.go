@@ -149,7 +149,7 @@ func TestWithCoat_BodyMatching(t *testing.T) {
 		WithCoats(
 			Coat{
 				Name:    "create-alice",
-				Request: Request{Method: "POST", URI: "/api/v1/users", Body: `{"name": "alice"}`},
+				Request: Request{Method: "POST", URI: "/api/v1/users", Body: StringPtr(`{"name": "alice"}`)},
 				Response: &Response{
 					Code: 201,
 					Body: "alice created",
@@ -157,7 +157,7 @@ func TestWithCoat_BodyMatching(t *testing.T) {
 			},
 			Coat{
 				Name:    "create-bob",
-				Request: Request{Method: "POST", URI: "/api/v1/users", Body: `{"name": "bob"}`},
+				Request: Request{Method: "POST", URI: "/api/v1/users", Body: StringPtr(`{"name": "bob"}`)},
 				Response: &Response{
 					Code: 201,
 					Body: "bob created",

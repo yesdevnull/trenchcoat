@@ -539,8 +539,13 @@ func TestProxy_CaptureBody_Default(t *testing.T) {
 	if len(captured.Coats) == 0 {
 		t.Fatal("expected at least one coat in captured file")
 	}
-	if captured.Coats[0].Request.Body != `{"name": "alice"}` {
-		t.Fatalf("expected request body %q, got %q", `{"name": "alice"}`, captured.Coats[0].Request.Body)
+	wantBody := `{"name": "alice"}`
+	if captured.Coats[0].Request.Body == nil || *captured.Coats[0].Request.Body != wantBody {
+		var got string
+		if captured.Coats[0].Request.Body != nil {
+			got = *captured.Coats[0].Request.Body
+		}
+		t.Fatalf("expected request body %q, got %q", wantBody, got)
 	}
 }
 
@@ -597,8 +602,8 @@ func TestProxy_CaptureBody_Disabled(t *testing.T) {
 	if len(captured.Coats) == 0 {
 		t.Fatal("expected at least one coat in captured file")
 	}
-	if captured.Coats[0].Request.Body != "" {
-		t.Fatalf("expected empty request body when CaptureBody is disabled, got %q", captured.Coats[0].Request.Body)
+	if captured.Coats[0].Request.Body != nil {
+		t.Fatalf("expected nil request body when CaptureBody is disabled, got %q", *captured.Coats[0].Request.Body)
 	}
 }
 

@@ -111,7 +111,7 @@ func New(coats []coat.Coat) *Matcher {
 				e.specificity++
 			}
 		}
-		if c.Request.Body != "" {
+		if c.Request.Body != nil {
 			e.specificity++
 		}
 
@@ -368,14 +368,14 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 }
 
 func matchesBody(e *entry, getBody func() ([]byte, bool)) bool {
-	if e.coat.Request.Body == "" {
+	if e.coat.Request.Body == nil {
 		return true // No body constraint — matches anything.
 	}
 	body, readErr := getBody()
 	if readErr {
 		return false // Treat read errors as non-match.
 	}
-	return string(body) == e.coat.Request.Body
+	return string(body) == *e.coat.Request.Body
 }
 
 // globMatch performs simple glob matching on a string value.
