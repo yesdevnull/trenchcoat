@@ -143,13 +143,27 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 		}
 		bodyRead = true
 		if req.Body != nil {
-			var err error
-			reqBody, err = io.ReadAll(io.LimitReader(req.Body, maxBodyMatchSize))
-			_ = req.Body.Close()
+			origBody := req.Body
+
+			// Read up to maxBodyMatchSize+1 bytes so we can detect truncation.
+			limited := io.LimitReader(origBody, maxBodyMatchSize+1)
+			allRead, err := io.ReadAll(limited)
 			if err != nil {
 				bodyReadErr = true
 			}
-			req.Body = io.NopCloser(bytes.NewReader(reqBody))
+
+			// If we read more than maxBodyMatchSize bytes, treat it as too large
+			// for body matching, but still restore the full body for downstream use.
+			if len(allRead) > maxBodyMatchSize {
+				bodyReadErr = true
+				reqBody = allRead[:maxBodyMatchSize]
+			} else {
+				reqBody = allRead
+			}
+
+			// Reconstitute req.Body as the bytes already read plus the remaining
+			// unread original body so downstream handlers see the full body.
+			req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(allRead), origBody))
 		}
 		return reqBody, bodyReadErr
 	}
