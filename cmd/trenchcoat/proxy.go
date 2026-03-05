@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -50,7 +51,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	// Allow TLS certificates with negative serial numbers when opted in.
 	// Go 1.23+ rejects these by default. See https://go.dev/doc/godebug#x509negativeserial.
 	if allowNegativeSerial {
-		if err := os.Setenv("GODEBUG", appendGODEBUG(os.Getenv("GODEBUG"), "x509negativeserial=1")); err != nil {
+		if err := os.Setenv("GODEBUG", setGODEBUG(os.Getenv("GODEBUG"), "x509negativeserial=1")); err != nil {
 			logger.Warn("failed to set GODEBUG for x509negativeserial", "error", err)
 		}
 	}
@@ -103,11 +104,20 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// appendGODEBUG appends a key=value pair to an existing GODEBUG string,
-// preserving any previously set values.
-func appendGODEBUG(existing, kv string) string {
+// setGODEBUG sets or replaces a key=value pair in a GODEBUG string,
+// preserving any other existing values.
+func setGODEBUG(existing, kv string) string {
+	key := strings.SplitN(kv, "=", 2)[0]
 	if existing == "" {
 		return kv
+	}
+	// Replace existing key if present.
+	parts := strings.Split(existing, ",")
+	for i, part := range parts {
+		if strings.HasPrefix(part, key+"=") {
+			parts[i] = kv
+			return strings.Join(parts, ",")
+		}
 	}
 	return existing + "," + kv
 }

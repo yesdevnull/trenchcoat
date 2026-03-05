@@ -748,9 +748,9 @@ func TestSingleJoiningSlash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var receivedPath string
+			pathCh := make(chan string, 1)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				receivedPath = r.URL.Path
+				pathCh <- r.URL.Path
 				w.WriteHeader(200)
 				_, _ = w.Write([]byte("ok"))
 			}))
@@ -776,8 +776,8 @@ func TestSingleJoiningSlash(t *testing.T) {
 				t.Fatalf("request failed: %v", err)
 			}
 			_ = resp.Body.Close()
-			p.WaitCaptures()
 
+			receivedPath := <-pathCh
 			if !strings.Contains(receivedPath, tt.wantContains) {
 				t.Fatalf("expected upstream path to contain %q, got %q", tt.wantContains, receivedPath)
 			}
