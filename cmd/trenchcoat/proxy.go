@@ -23,7 +23,7 @@ func newProxyCmd() *cobra.Command {
 	cmd.Flags().String("filter", "", "Only capture requests whose URI matches this glob pattern")
 	cmd.Flags().StringSlice("strip-headers", []string{"Authorization", "Cookie", "Set-Cookie"}, "Headers to redact from captured coat files")
 	cmd.Flags().String("dedupe", "overwrite", "Deduplication strategy: overwrite, skip, or append")
-	cmd.Flags().Bool("capture-body", true, "Capture request body in coat files for POST/PUT/PATCH requests")
+	cmd.Flags().Bool("capture-body", true, "Capture request body in coat files for any request with a body")
 	cmd.Flags().Bool("verbose", false, "Log each proxied request and capture event")
 	cmd.Flags().String("log-format", "text", "Log output format: text or json")
 

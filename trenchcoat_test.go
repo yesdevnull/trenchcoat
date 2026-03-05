@@ -172,8 +172,11 @@ func TestWithCoat_BodyMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
 	if resp.StatusCode != 201 {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
 	}
@@ -186,8 +189,11 @@ func TestWithCoat_BodyMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	body2, _ := io.ReadAll(resp2.Body)
+	body2, err := io.ReadAll(resp2.Body)
 	_ = resp2.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
 	if resp2.StatusCode != 201 {
 		t.Fatalf("expected 201, got %d", resp2.StatusCode)
 	}
