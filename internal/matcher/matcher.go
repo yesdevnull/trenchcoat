@@ -17,8 +17,9 @@ import (
 )
 
 // maxBodyMatchSize is the maximum request body size (in bytes) that the matcher
-// will read for body matching. Bodies larger than this are truncated, which may
-// cause a body-constrained coat to not match.
+// will read for body matching. Bodies larger than this are not eligible for
+// body-based matching, so any body-constrained coat will never match such a
+// request (although the full body is still restored for downstream use).
 const maxBodyMatchSize = 1 << 20 // 1 MiB
 
 // uriMatchType defines how a URI pattern is matched.
@@ -162,8 +163,15 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 			}
 
 			// Reconstitute req.Body as the bytes already read plus the remaining
-			// unread original body so downstream handlers see the full body.
-			req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(allRead), origBody))
+			// unread original body so downstream handlers see the full body, and
+			// ensure Close() still delegates to the original body's Close().
+			req.Body = struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: io.MultiReader(bytes.NewReader(allRead), origBody),
+				Closer: origBody,
+			}
 		}
 		return reqBody, bodyReadErr
 	}
