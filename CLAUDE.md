@@ -1,91 +1,36 @@
 # Trenchcoat
 
 Extensible mock, and proxy-to-mock, HTTP server written in Go.
-
-## Project Overview
-
-Trenchcoat is a CLI tool with two modes:
-
-1. **Serve mode** — mock HTTP server matching requests against "coat" definitions
-2. **Proxy mode** — HTTP proxy capturing request/response pairs as coat files
-
 Module path: `github.com/yesdevnull/trenchcoat`
 
 ## Repository Structure
 
 ```
-cmd/trenchcoat/           CLI entrypoint (cobra commands: serve, proxy, validate)
-  main.go                 Root command, signal handling, version info
-  serve.go                Serve subcommand with hot-reload file watching
-  proxy.go                Proxy subcommand
-  validate.go             Validate subcommand
-  commands_test.go        CLI integration tests
+cmd/trenchcoat/           CLI entrypoint (cobra: serve, proxy, validate)
 internal/
   coat/                   Types, parsing, validation for coat files
-    types.go              Core types: File, Coat, Request, Response, QueryField, StringMap
-    parse.go              YAML/JSON file parsing
-    load.go               LoadPaths: loads coats from files and directories
-    load_test.go          Tests for LoadPaths, IsCoatFile, directory scanning
-    parse_test.go         Tests for YAML/JSON parsing
-    validate.go           Schema validation (mutual exclusivity, regex, etc.)
-    validate_test.go      Tests for all validation rules
-    query.go              QueryField YAML/JSON unmarshalling
   config/                 Viper-based config file loading
-    config.go             Config discovery: --config > .trenchcoat.yaml > ~/.config/trenchcoat/config.yaml
-    config_test.go        Tests for config file discovery
   matcher/                Request matching engine (exact, glob, regex URI)
-    matcher.go            Match logic, precedence scoring, sequence state, body matching
-    matcher_test.go       Tests for URI/method/header/query/body matching, precedence
-    sequence_test.go      Tests for cycle and once sequence modes
   proxy/                  Proxy capture server
-    proxy.go              HTTP proxy, upstream forwarding, coat file capture
-    proxy_test.go         Integration tests for proxy capture
-    proxy_validation_test.go  Tests for proxy config validation
-  server/                 Mock HTTP server
-    server.go             HTTP server, request handling, body_file resolution
-    server_test.go        Integration tests for mock server
-    reload_test.go        Tests for hot-reload via Reload()
-    tls_test.go           Tests for TLS serving
-    verbose_test.go       Tests for verbose request logging
-examples/
-  go-tests/               Example test suite using the programmatic API
-    example_test.go       Basic mock, multiple coats, headers, sequences, globs
-docs/
-  demo.md                 CLI demo walkthrough
-  ROADMAP.md              Future feature plans
-  test-coverage-analysis.md  Coverage report and test inventory
-trenchcoat.go             Public API package for Go test integration
-trenchcoat_test.go        Public API tests
+  server/                 Mock HTTP server, body_file resolution
+examples/go-tests/        Example test suite using the programmatic API
+docs/                     Demo walkthrough, roadmap, test coverage analysis
+trenchcoat.go             Public API for Go test integration
 coatfile.schema.json      JSON Schema (draft 2020-12) for coat file validation
-.github/workflows/ci.yaml  CI pipeline (test, lint, vet, format, build)
-.goreleaser.yaml          GoReleaser config for cross-platform releases
-renovate.json             Renovate dependency auto-update config
 ```
+
+Test files follow Go convention (`*_test.go` alongside source).
 
 ## Development
 
-### Requirements
+**Requirements:** Go 1.25.x (CI pins 1.25.7), golangci-lint v2.10.1+
 
-- Go 1.25.x (pinned in CI: 1.25.7)
-- golangci-lint v2.10.1+
-
-### Installing Go
-
-If Go 1.25+ is not installed or the auto-download via `GOTOOLCHAIN` fails (e.g.
-due to DNS/network restrictions), install manually:
+If Go 1.25+ is not installed or `GOTOOLCHAIN` auto-download fails, install manually:
 
 ```bash
-# Download (linux/amd64 — adjust for your platform)
 curl -fSL -o /tmp/go1.25.7.linux-amd64.tar.gz "https://go.dev/dl/go1.25.7.linux-amd64.tar.gz"
-
-# Install (removes any previous Go installation in /usr/local/go)
 rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go1.25.7.linux-amd64.tar.gz
-
-# Verify
-go version   # should print "go version go1.25.7 linux/amd64"
 ```
-
-Ensure `/usr/local/go/bin` is in your `PATH`.
 
 ### Commands
 
@@ -95,14 +40,6 @@ make test           # Run tests (verbose, race detector)
 make coverage       # Run tests with coverage, generate HTML report
 make lint           # Run golangci-lint
 make clean          # Clean build artifacts and test cache
-
-go test ./...                           # Run all tests
-go test -v -race -count=1 ./...        # Verbose with race detector
-go vet ./...                            # Static analysis
-gofmt -w .                              # Format code
-goimports -w .                          # Fix imports
-golangci-lint run ./...                 # Lint
-govulncheck ./...                       # Vulnerability check
 ```
 
 ### Build with Version Info
@@ -117,56 +54,29 @@ go build -ldflags "-s -w \
 
 ## TDD Methodology
 
-Use Red/Green/Refactor throughout:
+Every feature begins with a test. Do not write implementation code without a corresponding failing test first.
 
 1. **Red** — Write a failing test that defines expected behaviour
 2. **Green** — Write the minimum code to pass
 3. **Refactor** — Clean up while keeping tests green
 
-Every feature begins with a test. Do not write implementation code without a corresponding failing test first.
-
-## Architecture Notes
+## Architecture
 
 ### CLI Commands
 
-The CLI uses cobra with three subcommands:
+The CLI uses cobra with three subcommands. All support `--config` for explicit config file path.
 
-**`trenchcoat serve`** — Start the mock HTTP server
-- `--coats` — Paths to coat files or directories to load
-- `--port` — Port to listen on (default: 8080)
-- `--tls-cert` / `--tls-key` — TLS certificate and key (must be provided together)
-- `--watch` — Watch coat files for changes and hot-reload
-- `--verbose` — Log each incoming request and match result
-- `--log-format` — Log format: `text` (default) or `json`
+**`trenchcoat serve`** — `--coats`, `--port` (8080), `--tls-cert`/`--tls-key`, `--watch`, `--verbose`, `--log-format` (text|json)
 
-**`trenchcoat proxy <upstream-url>`** — Start in proxy capture mode
-- `--port` — Port to listen on (default: 8080)
-- `--write-dir` — Directory to write captured coat files (default: `.`)
-- `--filter` — Only capture requests whose URI matches this glob pattern
-- `--strip-headers` — Headers to redact (default: `Authorization`, `Cookie`, `Set-Cookie`)
-- `--no-headers` — Omit all headers from captured coat files (mutually exclusive with `--strip-headers`)
-- `--capture-body` — Capture request body in coat files (default: `true`)
-- `--dedupe` — Deduplication strategy: `overwrite` (default), `skip`, or `append`
-- `--verbose` — Log each proxied request and capture event
-- `--log-format` — Log format: `text` (default) or `json`
+**`trenchcoat proxy <upstream-url>`** — `--port` (8080), `--write-dir` (.), `--filter`, `--strip-headers` (Authorization/Cookie/Set-Cookie), `--no-headers`, `--capture-body` (true), `--dedupe` (overwrite|skip|append), `--verbose`, `--log-format`
 
 **`trenchcoat validate <path>...`** — Validate coat files for schema correctness
 
-All commands support `--config` (global flag) for explicit config file path.
-
-### Configuration File Discovery
-
-Config files are discovered in this order (first found wins):
-
-1. `--config` flag (explicit path)
-2. `.trenchcoat.yaml` / `.trenchcoat.yml` in current working directory
-3. `~/.config/trenchcoat/config.yaml`
-
-No config file is required — the tool works with CLI flags alone.
+Config discovery: `--config` flag > `.trenchcoat.yaml` in cwd > `~/.config/trenchcoat/config.yaml`. No config file required.
 
 ### Coat Specification
 
-Coats are YAML or JSON files defining request/response mocks. Schema:
+Coats are YAML or JSON files defining request/response mocks (`coatfile.schema.json` provides machine-readable validation):
 
 ```yaml
 coats:
@@ -194,63 +104,21 @@ coats:
     sequence: cycle                  # cycle (default) or once
 ```
 
-### URI Matching Modes
+**URI matching:** Exact (plain string) > Glob (`*`/`?`) > Regex (`~/` prefix)
 
-| Mode  | Syntax          | Example                    |
-|-------|-----------------|----------------------------|
-| Exact | Plain string    | `/api/v1/users`            |
-| Glob  | Contains `*`/?  | `/api/v1/users/*`          |
-| Regex | `~/` prefix     | `~/api/v1/users/\d+`       |
+**Match precedence** (highest to lowest): exact URI + most qualifiers (headers/query/body) > glob (longer literal prefix wins) > regex (definition order) > `method: ANY` ranks below method-specific > earlier definition wins as tiebreaker. Body matching capped at 1 MiB.
 
-### Match Precedence (highest to lowest)
-
-1. Exact URI + method + headers + query
-2. Exact URI + method + fewer qualifiers
-3. Glob URI (longer literal prefix wins)
-4. Regex URI (file-definition order)
-5. `method: ANY` ranks below method-specific at same specificity
-6. Definition order (earlier in file wins) as final tiebreaker
-
-Request body matching is capped at 1 MiB (`maxBodyMatchSize`); larger bodies
-are not eligible for body-constrained matching but are still passed through.
-
-### JSON Schema
-
-A machine-readable JSON Schema for coat files is available at
-`coatfile.schema.json` (JSON Schema draft 2020-12). It encodes the coat
-specification including `oneOf` constraints for `response`/`responses` mutual
-exclusivity and `body`/`body_file` mutual exclusivity.
-
-### Validation Rules
-
-- `request.uri` is required
-- Must have exactly one of `response` (singular) or `responses` (plural)
-- `body` and `body_file` are mutually exclusive (in both singular and plural forms)
-- `sequence` is only valid with `responses` (plural), must be `cycle` or `once`
-- Regex URIs (`~/` prefix) must compile as valid Go regexps
-
-### Key Dependencies
-
-| Package         | Purpose                        |
-|-----------------|--------------------------------|
-| cobra           | CLI framework                  |
-| viper           | Config file and flag binding   |
-| fsnotify        | Hot-reload file watching       |
-| slog (stdlib)   | Structured logging             |
-| gopkg.in/yaml.v3 | YAML parsing                 |
+**Validation rules:**
+- `request.uri` required; `response` xor `responses` required
+- `body` and `body_file` mutually exclusive; `sequence` only valid with `responses` (`cycle`|`once`)
+- Regex URIs must compile as valid Go regexps
 
 ### Proxy Capture
 
+- File naming: `{METHOD}_{sanitised_path}_{status}.yaml`; dedupe via `overwrite`/`skip`/`append`
+- Gzip responses decompressed for readability; redirects captured as-is (`http.ErrUseLastResponse`)
 - Respects `http_proxy`/`https_proxy`/`no_proxy` env vars
-- File naming: `{METHOD}_{sanitised_path}_{status}.yaml`
-- Dedupe strategies: `overwrite` (stable filename), `skip`, `append`
-- Headers in `--strip-headers` are redacted from captures
-- Gzip-compressed upstream responses are decompressed for readability in captured coats
-- Redirect responses are captured as-is (client does not follow redirects and returns the 3xx response as-is via `http.ErrUseLastResponse`)
-- To proxy to upstreams with TLS certificates using negative serial numbers
-  (rejected by Go 1.23+), set the environment variable
-  `GODEBUG=x509negativeserial=1` before starting the proxy. See
-  https://go.dev/doc/godebug#x509negativeserial for details.
+- For upstreams with negative TLS serial numbers (Go 1.23+), set `GODEBUG=x509negativeserial=1`
 
 ### Programmatic API (for Go tests)
 
@@ -269,39 +137,12 @@ srv.Start(t) // registers t.Cleanup to stop the server
 // srv.URL contains "http://127.0.0.1:<port>"
 ```
 
-Available options:
-- `WithCoat(Coat)` — add a single coat
-- `WithCoats(...Coat)` — add multiple coats
-- `WithCoatFile(path)` — load coats from a YAML/JSON file
-- `WithVerbose()` — enable verbose request logging
-
-Helpers:
-- `StringPtr(s string) *string` — convenience for setting `Request.Body`
-
-## Testing Expectations
-
-- Unit tests for matcher: exact, glob, regex URI; method+ANY; header globs; query matching; precedence
-- Unit tests for coat parsing/validation (YAML, JSON, mutual exclusivity rules)
-- Integration tests for serve mode (start server, send requests, assert responses)
-- Integration tests for proxy mode (proxy through, assert captured coat files)
-- Tests for response sequences (cycle and once modes)
-- Tests for hot-reload (modify coat file on disk, verify server picks up changes)
-- Tests for TLS (self-signed cert)
-- Tests for the public API (`trenchcoat_test.go`)
-- Tests for CLI commands (`commands_test.go`)
-
-See `docs/test-coverage-analysis.md` for detailed coverage data and test inventory.
+Options: `WithCoat(Coat)`, `WithCoats(...Coat)`, `WithCoatFile(path)`, `WithVerbose()`
+Helpers: `StringPtr(s string) *string` — convenience for setting `Request.Body`
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/ci.yaml` runs:
-- **Test**: `go test -v -count=1 -race -coverprofile=coverage.out` (uploads coverage artifact)
-- **Lint**: golangci-lint v2.10.1 via `golangci-lint-action`
-- **Vet**: `go vet`, `go mod tidy` check, `govulncheck`
-- **Format**: `gofmt -l`, `goimports -l` (fail if any files are unformatted)
-- **Build**: Cross-compile linux/darwin/windows x amd64/arm64 with ldflags (depends on all other jobs)
-
-Releases are configured via `.goreleaser.yaml` (tar.gz archives with checksums).
+GitHub Actions (`.github/workflows/ci.yaml`): **Test** (race, coverage) → **Lint** (golangci-lint v2.10.1) → **Vet** (`go vet`, `go mod tidy`, `govulncheck`) → **Format** (`gofmt`, `goimports`) → **Build** (linux/darwin/windows × amd64/arm64). Releases via `.goreleaser.yaml`.
 
 ## Pre-commit Requirements
 
@@ -315,8 +156,7 @@ go vet ./...                # Static analysis
 go test -race ./...         # Run tests with race detector
 ```
 
-All Go source files **must** be formatted with `gofmt` and `goimports` before
-committing. Unformatted code must not be committed.
+All Go source files **must** be formatted with `gofmt` and `goimports` before committing.
 
 ## Conventions
 
