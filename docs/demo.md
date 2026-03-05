@@ -70,6 +70,7 @@ Usage:
   trenchcoat proxy <upstream-url> [flags]
 
 Flags:
+      --capture-body            Capture request body in coat files for any request with a body (default true)
       --dedupe string           Deduplication strategy: overwrite, skip, or append (default "overwrite")
       --filter string           Only capture requests whose URI matches this glob pattern
   -h, --help                    help for proxy
