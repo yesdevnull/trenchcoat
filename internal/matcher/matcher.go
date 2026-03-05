@@ -16,6 +16,11 @@ import (
 	"github.com/yesdevnull/trenchcoat/internal/coat"
 )
 
+// maxBodyMatchSize is the maximum request body size (in bytes) that the matcher
+// will read for body matching. Bodies larger than this are truncated, which may
+// cause a body-constrained coat to not match.
+const maxBodyMatchSize = 1 << 20 // 1 MiB
+
 // uriMatchType defines how a URI pattern is matched.
 type uriMatchType int
 
@@ -118,8 +123,9 @@ func New(coats []coat.Coat) *Matcher {
 // Match finds the best matching coat for an incoming request.
 // Returns nil if no coat matches.
 //
-// If any coat specifies a request body, the request body is read and buffered.
-// The request body is replaced with a new reader so it remains available.
+// If a candidate coat that passed method/URI/header/query checks specifies a
+// request body, the request body is read and buffered lazily. The request body
+// is replaced with a new reader so it remains available.
 func (m *Matcher) Match(req *http.Request) *MatchResult {
 	type candidate struct {
 		entry *entry
@@ -127,19 +133,25 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 	}
 
 	// Lazily read the request body only if needed for body matching.
+	// Bounded to maxBodyMatchSize to avoid unbounded memory allocation.
 	var reqBody []byte
 	var bodyRead bool
-	getBody := func() []byte {
+	var bodyReadErr bool
+	getBody := func() ([]byte, bool) {
 		if bodyRead {
-			return reqBody
+			return reqBody, bodyReadErr
 		}
 		bodyRead = true
 		if req.Body != nil {
-			reqBody, _ = io.ReadAll(req.Body)
+			var err error
+			reqBody, err = io.ReadAll(io.LimitReader(req.Body, maxBodyMatchSize))
 			_ = req.Body.Close()
+			if err != nil {
+				bodyReadErr = true
+			}
 			req.Body = io.NopCloser(bytes.NewReader(reqBody))
 		}
-		return reqBody
+		return reqBody, bodyReadErr
 	}
 
 	var candidates []candidate
@@ -333,11 +345,14 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 	return true
 }
 
-func matchesBody(e *entry, getBody func() []byte) bool {
+func matchesBody(e *entry, getBody func() ([]byte, bool)) bool {
 	if e.coat.Request.Body == "" {
 		return true // No body constraint — matches anything.
 	}
-	body := getBody()
+	body, readErr := getBody()
+	if readErr {
+		return false // Treat read errors as non-match.
+	}
 	return string(body) == e.coat.Request.Body
 }
 

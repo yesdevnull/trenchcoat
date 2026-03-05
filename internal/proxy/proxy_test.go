@@ -480,7 +480,11 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 func TestProxy_CaptureBody_Default(t *testing.T) {
 	// By default, CaptureBody should be true and POST request bodies should be captured.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read body", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
 		_, _ = w.Write([]byte(`{"received": "` + string(body) + `"}`))
