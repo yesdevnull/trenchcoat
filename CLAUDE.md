@@ -22,19 +22,31 @@ cmd/trenchcoat/           CLI entrypoint (cobra commands: serve, proxy, validate
   commands_test.go        CLI integration tests
 internal/
   coat/                   Types, parsing, validation for coat files
-    types.go              Core types: File, Coat, Request, Response, QueryField
+    types.go              Core types: File, Coat, Request, Response, QueryField, StringMap
     parse.go              YAML/JSON file parsing
     load.go               LoadPaths: loads coats from files and directories
+    load_test.go          Tests for LoadPaths, IsCoatFile, directory scanning
+    parse_test.go         Tests for YAML/JSON parsing
     validate.go           Schema validation (mutual exclusivity, regex, etc.)
+    validate_test.go      Tests for all validation rules
     query.go              QueryField YAML/JSON unmarshalling
   config/                 Viper-based config file loading
     config.go             Config discovery: --config > .trenchcoat.yaml > ~/.config/trenchcoat/config.yaml
+    config_test.go        Tests for config file discovery
   matcher/                Request matching engine (exact, glob, regex URI)
-    matcher.go            Match logic, precedence scoring, sequence state
+    matcher.go            Match logic, precedence scoring, sequence state, body matching
+    matcher_test.go       Tests for URI/method/header/query/body matching, precedence
+    sequence_test.go      Tests for cycle and once sequence modes
   proxy/                  Proxy capture server
     proxy.go              HTTP proxy, upstream forwarding, coat file capture
+    proxy_test.go         Integration tests for proxy capture
+    proxy_validation_test.go  Tests for proxy config validation
   server/                 Mock HTTP server
     server.go             HTTP server, request handling, body_file resolution
+    server_test.go        Integration tests for mock server
+    reload_test.go        Tests for hot-reload via Reload()
+    tls_test.go           Tests for TLS serving
+    verbose_test.go       Tests for verbose request logging
 examples/
   go-tests/               Example test suite using the programmatic API
     example_test.go       Basic mock, multiple coats, headers, sequences, globs
@@ -44,6 +56,7 @@ docs/
   test-coverage-analysis.md  Coverage report and test inventory
 trenchcoat.go             Public API package for Go test integration
 trenchcoat_test.go        Public API tests
+coatfile.schema.json      JSON Schema (draft 2020-12) for coat file validation
 .github/workflows/ci.yaml  CI pipeline (test, lint, vet, format, build)
 .goreleaser.yaml          GoReleaser config for cross-platform releases
 renovate.json             Renovate dependency auto-update config
@@ -196,6 +209,17 @@ coats:
 3. Glob URI (longer literal prefix wins)
 4. Regex URI (file-definition order)
 5. `method: ANY` ranks below method-specific at same specificity
+6. Definition order (earlier in file wins) as final tiebreaker
+
+Request body matching is capped at 1 MiB (`maxBodyMatchSize`); larger bodies
+are not eligible for body-constrained matching but are still passed through.
+
+### JSON Schema
+
+A machine-readable JSON Schema for coat files is available at
+`coatfile.schema.json` (JSON Schema draft 2020-12). It encodes the coat
+specification including `oneOf` constraints for `response`/`responses` mutual
+exclusivity and `body`/`body_file` mutual exclusivity.
 
 ### Validation Rules
 
@@ -250,6 +274,9 @@ Available options:
 - `WithCoats(...Coat)` — add multiple coats
 - `WithCoatFile(path)` — load coats from a YAML/JSON file
 - `WithVerbose()` — enable verbose request logging
+
+Helpers:
+- `StringPtr(s string) *string` — convenience for setting `Request.Body`
 
 ## Testing Expectations
 
