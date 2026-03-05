@@ -723,6 +723,42 @@ func TestProxyCmd_VerboseMode(t *testing.T) {
 	}
 }
 
+func TestProxyCmd_NoHeaders(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cmd := newProxyCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{"http://localhost:9999", "--port", "0", "--write-dir", t.TempDir(), "--no-headers"})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Execute()
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for proxy to stop")
+	}
+}
+
+func TestProxyCmd_NoHeaders_WithStripHeaders_Conflict(t *testing.T) {
+	cmd := newProxyCmd()
+	cmd.SetArgs([]string{"http://localhost:9999", "--no-headers", "--strip-headers", "Authorization"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when both --no-headers and --strip-headers are set")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got: %v", err)
+	}
+}
+
 // --- watchCoats tests ---
 
 func TestWatchCoats_NonExistentPaths(t *testing.T) {

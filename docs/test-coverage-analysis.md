@@ -28,7 +28,7 @@ Functions below 100% coverage, ordered by impact:
 | Function | Coverage | Notes |
 |----------|----------|-------|
 | `cmd/trenchcoat/main.go:main` | 0% | CLI entrypoint — cannot unit test |
-| `cmd/trenchcoat/proxy.go:appendGODEBUG` | 0% | Only reachable via `--allow-negative-serial` flag |
+| `cmd/trenchcoat/proxy.go:setGODEBUG` | 100% | Covered by `TestSetGODEBUG` |
 | `proxy.go:Start` | 72.7% | Listen/mkdir error paths |
 | `trenchcoat.go:Start` | 80.0% | Start error path |
 | `coat/query.go:UnmarshalYAML` | 80.0% | Missing invalid type branch |
@@ -65,7 +65,7 @@ Functions below 100% coverage, ordered by impact:
 - Validate command: valid file, invalid file, non-existent file, directory, no args
 - `newLogger`: text, json, unknown (default)
 - Serve command: TLS cert without key, TLS key without cert, no coats, with coats, with watch
-- Proxy command: invalid dedupe, no args, invalid upstream URL, start-and-stop, verbose mode
+- Proxy command: invalid dedupe, no args, invalid upstream URL, start-and-stop, verbose mode, no-headers, no-headers with strip-headers conflict
 - `watchCoats`: non-existent paths, with directory and file
 - `TestWatchCoats_FileModificationTriggersReload` — modify coat file triggers reload
 - `TestWatchCoats_NonCoatFileIgnored` — non-coat file changes ignored
@@ -110,6 +110,8 @@ Functions below 100% coverage, ordered by impact:
 - `TestProxy_Filter_InvalidPattern` — malformed glob filter handled gracefully
 - `TestSingleJoiningSlash` — reachable branch coverage for path joining
 - `TestProxy_RedirectHandling` — 3xx responses captured and relayed as-is
+- `TestProxy_NoHeaders` — all headers omitted from captured coats when NoHeaders=true
+- `TestProxy_NoHeaders_StripHeaders_MutuallyExclusive` — NoHeaders and StripHeaders conflict rejected
 
 ### `internal/server/` (97.0%)
 

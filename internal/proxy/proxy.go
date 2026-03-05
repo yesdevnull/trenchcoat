@@ -34,6 +34,7 @@ type Config struct {
 	WriteDir     string
 	Filter       string
 	StripHeaders []string
+	NoHeaders    bool   // omit ALL headers from captured coat files
 	Dedupe       string // overwrite, skip, append
 	CaptureBody  *bool  // capture request body in coat files; nil defaults to true
 	Verbose      bool
@@ -65,6 +66,10 @@ func New(cfg Config) (*Proxy, error) {
 	}
 	if cfg.WriteDir == "" {
 		cfg.WriteDir = "."
+	}
+
+	if cfg.NoHeaders && len(cfg.StripHeaders) > 0 {
+		return nil, fmt.Errorf("--no-headers and --strip-headers are mutually exclusive")
 	}
 
 	if cfg.UpstreamURL == "" {
@@ -273,17 +278,20 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	}
 
 	// Build coat definition.
-	reqHeaders := make(map[string]string)
-	for k := range r.Header {
-		if !p.isStrippedHeader(k) {
-			reqHeaders[k] = r.Header.Get(k)
+	var reqHeaders, respHeaders map[string]string
+	if !p.config.NoHeaders {
+		reqHeaders = make(map[string]string)
+		for k := range r.Header {
+			if !p.isStrippedHeader(k) {
+				reqHeaders[k] = r.Header.Get(k)
+			}
 		}
-	}
 
-	respHeaders := make(map[string]string)
-	for k := range resp.Header {
-		if !p.isStrippedHeader(k) && (!decompressed || !isEncodingHeader(k)) {
-			respHeaders[k] = resp.Header.Get(k)
+		respHeaders = make(map[string]string)
+		for k := range resp.Header {
+			if !p.isStrippedHeader(k) && (!decompressed || !isEncodingHeader(k)) {
+				respHeaders[k] = resp.Header.Get(k)
+			}
 		}
 	}
 

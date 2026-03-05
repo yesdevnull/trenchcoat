@@ -131,6 +131,7 @@ The CLI uses cobra with three subcommands:
 - `--write-dir` — Directory to write captured coat files (default: `.`)
 - `--filter` — Only capture requests whose URI matches this glob pattern
 - `--strip-headers` — Headers to redact (default: `Authorization`, `Cookie`, `Set-Cookie`)
+- `--no-headers` — Omit all headers from captured coat files (mutually exclusive with `--strip-headers`)
 - `--capture-body` — Capture request body in coat files (default: `true`)
 - `--dedupe` — Deduplication strategy: `overwrite` (default), `skip`, or `append`
 - `--verbose` — Log each proxied request and capture event
