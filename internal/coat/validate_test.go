@@ -49,6 +49,114 @@ func TestValidate_InvalidRegexURI(t *testing.T) {
 	}
 }
 
+// --- body_match validation ---
+
+func TestValidate_BodyMatchWithoutBody(t *testing.T) {
+	f := &File{
+		Coats: []Coat{
+			{
+				Name:     "no-body",
+				Request:  Request{URI: "/test", BodyMatch: "glob"},
+				Response: &Response{Code: 200},
+			},
+		},
+	}
+	errs := Validate(f)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Message, "body_match requires request.body") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected error about body_match requiring body, got: %v", errs)
+	}
+}
+
+func TestValidate_BodyMatchInvalidValue(t *testing.T) {
+	body := "hello"
+	f := &File{
+		Coats: []Coat{
+			{
+				Name:     "bad-mode",
+				Request:  Request{URI: "/test", Body: &body, BodyMatch: "fuzzy"},
+				Response: &Response{Code: 200},
+			},
+		},
+	}
+	errs := Validate(f)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Message, "must be one of") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected error about invalid body_match value, got: %v", errs)
+	}
+}
+
+func TestValidate_BodyMatchRegexInvalid(t *testing.T) {
+	body := "[bad"
+	f := &File{
+		Coats: []Coat{
+			{
+				Name:     "bad-regex-body",
+				Request:  Request{URI: "/test", Body: &body, BodyMatch: "regex"},
+				Response: &Response{Code: 200},
+			},
+		},
+	}
+	errs := Validate(f)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Message, "invalid regex") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected error about invalid body regex, got: %v", errs)
+	}
+}
+
+func TestValidate_BodyMatchValid(t *testing.T) {
+	body := "test"
+	for _, mode := range []string{"exact", "glob", "contains"} {
+		f := &File{
+			Coats: []Coat{
+				{
+					Name:     "valid-" + mode,
+					Request:  Request{URI: "/test", Body: &body, BodyMatch: mode},
+					Response: &Response{Code: 200},
+				},
+			},
+		}
+		errs := Validate(f)
+		if len(errs) != 0 {
+			t.Errorf("body_match=%q: unexpected validation errors: %v", mode, errs)
+		}
+	}
+
+	// Also test valid regex.
+	regexBody := `\d+`
+	f := &File{
+		Coats: []Coat{
+			{
+				Name:     "valid-regex",
+				Request:  Request{URI: "/test", Body: &regexBody, BodyMatch: "regex"},
+				Response: &Response{Code: 200},
+			},
+		},
+	}
+	errs := Validate(f)
+	if len(errs) != 0 {
+		t.Errorf("body_match=regex: unexpected validation errors: %v", errs)
+	}
+}
+
 func TestParseYAML_MalformedSyntax(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/bad.yaml"

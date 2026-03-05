@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -104,6 +105,100 @@ func TestServe_Addr_BeforeStart(t *testing.T) {
 	srv := server.New(coats, server.Config{})
 	if srv.Addr() != "" {
 		t.Fatalf("expected empty addr before Start(), got %q", srv.Addr())
+	}
+}
+
+func TestVerbose404_IncludesNearMisses(t *testing.T) {
+	coats := []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name: "auth-endpoint",
+				Request: coat.Request{
+					Method:  "GET",
+					URI:     "/api/v1/users",
+					Headers: map[string]string{"Authorization": "Bearer *"},
+				},
+				Response: &coat.Response{Code: 200, Body: "ok"},
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	srv := server.New(coats, server.Config{
+		Verbose: true,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	// Request without Authorization header should get a diagnostic 404.
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 404, resp.StatusCode)
+
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode JSON body: %v", err)
+	}
+
+	rawNearMisses, ok := body["near_misses"]
+	if !ok {
+		t.Fatal("expected 'near_misses' key in 404 JSON response")
+	}
+
+	var nearMisses []map[string]string
+	if err := json.Unmarshal(rawNearMisses, &nearMisses); err != nil {
+		t.Fatalf("failed to unmarshal near_misses: %v", err)
+	}
+	if len(nearMisses) == 0 {
+		t.Fatal("expected at least one near-miss")
+	}
+	if nearMisses[0]["coat_name"] != "auth-endpoint" {
+		t.Errorf("expected coat_name 'auth-endpoint', got %q", nearMisses[0]["coat_name"])
+	}
+	if !strings.Contains(nearMisses[0]["reason"], "header mismatch") {
+		t.Errorf("expected header mismatch reason, got %q", nearMisses[0]["reason"])
+	}
+
+	// Verify logging.
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "near miss") {
+		t.Errorf("expected 'near miss' in log output, got:\n%s", logOutput)
+	}
+}
+
+func TestNonVerbose404_NoNearMisses(t *testing.T) {
+	coats := []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "endpoint",
+				Request:  coat.Request{Method: "POST", URI: "/api/v1/users"},
+				Response: &coat.Response{Code: 201},
+			},
+		},
+	}
+	srv := startServer(t, coats)
+
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 404, resp.StatusCode)
+
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode JSON body: %v", err)
+	}
+
+	if _, ok := body["near_misses"]; ok {
+		t.Fatal("non-verbose mode should not include near_misses in 404 response")
 	}
 }
 
