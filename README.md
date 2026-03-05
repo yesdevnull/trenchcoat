@@ -90,6 +90,7 @@ trenchcoat proxy <upstream-url> [flags]
 | `--write-dir` | `.` | Directory to write captured coat files to. Created if it doesn't exist. |
 | `--filter` | | Only capture requests whose URI matches this glob (e.g. `/api/*`). Empty captures all. |
 | `--strip-headers` | `Authorization,Cookie,Set-Cookie` | Headers to redact from captured coats. Set to empty string to disable. |
+| `--capture-body` | `true` | Capture request body in coat files for any request with a body. |
 | `--dedupe` | `overwrite` | Deduplication strategy: `overwrite`, `skip`, or `append`. |
 | `--tls-cert` | | Path to TLS certificate file (PEM). |
 | `--tls-key` | | Path to TLS private key file (PEM). |
@@ -159,6 +160,7 @@ coats:
       query:                           # optional, map with glob values or raw query string
         page: "1"
         limit: "*"
+      body: '{"name": "alice"}'        # optional, exact string match on request body
 
     response:
       code: 200                        # optional, default: 200
@@ -179,6 +181,10 @@ coats:
 | Regex | Prefixed with `~/` | `~/api/v1/users/\d+` | `/api/v1/users/123` but not `/api/v1/users/abc` |
 
 When multiple coats match, the most specific wins: exact beats glob (longer literal prefix wins), glob beats regex, and method-specific beats `ANY`.
+
+### Request body matching
+
+The optional `body` field on a request performs an exact string comparison against the incoming request body. When omitted, any body (or no body) matches. When set — even to an empty string — only requests whose body matches exactly are selected. A coat with a `body` constraint is considered more specific than one without, so it wins when both otherwise tie.
 
 ### Response sequences
 

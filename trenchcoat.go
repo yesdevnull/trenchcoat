@@ -47,7 +47,9 @@ type QueryField = coat.QueryField
 
 // StringPtr returns a pointer to s. It is a convenience helper for constructing
 // Request literals with a body constraint.
-var StringPtr = coat.StringPtr
+func StringPtr(s string) *string {
+	return coat.StringPtr(s)
+}
 
 // Server wraps the internal Trenchcoat server for use in tests.
 type Server struct {
