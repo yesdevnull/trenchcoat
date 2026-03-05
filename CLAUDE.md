@@ -223,6 +223,10 @@ coats:
 - Headers in `--strip-headers` are redacted from captures
 - Gzip-compressed upstream responses are decompressed for readability in captured coats
 - Redirect responses are captured as-is (client does not follow redirects and returns the 3xx response as-is via `http.ErrUseLastResponse`)
+- To proxy to upstreams with TLS certificates using negative serial numbers
+  (rejected by Go 1.23+), set the environment variable
+  `GODEBUG=x509negativeserial=1` before starting the proxy. See
+  https://go.dev/doc/godebug#x509negativeserial for details.
 
 ### Programmatic API (for Go tests)
 

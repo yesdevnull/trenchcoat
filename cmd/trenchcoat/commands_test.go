@@ -1129,30 +1129,6 @@ coats:
 	}
 }
 
-// --- setGODEBUG tests ---
-
-func TestSetGODEBUG(t *testing.T) {
-	tests := []struct {
-		name     string
-		existing string
-		kv       string
-		want     string
-	}{
-		{"empty", "", "x509negativeserial=1", "x509negativeserial=1"},
-		{"unrelated_key", "httplaxcontentlength=1", "x509negativeserial=1", "httplaxcontentlength=1,x509negativeserial=1"},
-		{"replace_existing", "x509negativeserial=0", "x509negativeserial=1", "x509negativeserial=1"},
-		{"replace_among_others", "httplaxcontentlength=1,x509negativeserial=0,http2debug=1", "x509negativeserial=1", "httplaxcontentlength=1,x509negativeserial=1,http2debug=1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := setGODEBUG(tt.existing, tt.kv)
-			if got != tt.want {
-				t.Errorf("setGODEBUG(%q, %q) = %q, want %q", tt.existing, tt.kv, got, tt.want)
-			}
-		})
-	}
-}
-
 // --- helpers ---
 
 func writeTestFile(t *testing.T, path, content string) {
