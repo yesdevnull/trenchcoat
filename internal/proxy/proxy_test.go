@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/yesdevnull/trenchcoat/internal/coat"
 	"github.com/yesdevnull/trenchcoat/internal/proxy"
 )
 
@@ -527,11 +530,17 @@ func TestProxy_CaptureBody_Default(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read captured file: %v", err)
 	}
-	contentStr := string(content)
 
-	// The captured coat should contain the request body.
-	if !strings.Contains(contentStr, `{"name": "alice"}`) {
-		t.Fatalf("expected captured coat to contain request body, got:\n%s", contentStr)
+	// Parse the captured coat and assert on the request body structurally.
+	var captured coat.File
+	if err := yaml.Unmarshal(content, &captured); err != nil {
+		t.Fatalf("failed to unmarshal captured coat: %v", err)
+	}
+	if len(captured.Coats) == 0 {
+		t.Fatal("expected at least one coat in captured file")
+	}
+	if captured.Coats[0].Request.Body != `{"name": "alice"}` {
+		t.Fatalf("expected request body %q, got %q", `{"name": "alice"}`, captured.Coats[0].Request.Body)
 	}
 }
 
@@ -579,11 +588,17 @@ func TestProxy_CaptureBody_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read captured file: %v", err)
 	}
-	contentStr := string(content)
 
-	// With CaptureBody disabled, the request body should NOT appear in the coat.
-	if strings.Contains(contentStr, `{"name": "bob"}`) {
-		t.Fatalf("expected no request body in captured coat when CaptureBody is disabled, got:\n%s", contentStr)
+	// Parse the captured coat and assert the request body is absent.
+	var captured coat.File
+	if err := yaml.Unmarshal(content, &captured); err != nil {
+		t.Fatalf("failed to unmarshal captured coat: %v", err)
+	}
+	if len(captured.Coats) == 0 {
+		t.Fatal("expected at least one coat in captured file")
+	}
+	if captured.Coats[0].Request.Body != "" {
+		t.Fatalf("expected empty request body when CaptureBody is disabled, got %q", captured.Coats[0].Request.Body)
 	}
 }
 
