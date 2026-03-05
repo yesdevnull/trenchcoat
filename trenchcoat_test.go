@@ -231,7 +231,8 @@ func TestNewServer_NoCoats_Returns404(t *testing.T) {
 }
 
 func TestWithCoatFile_NonExistent(t *testing.T) {
-	srv := NewServer(WithCoatFile("/nonexistent/path/coat.yaml"))
+	missingCoat := filepath.Join(t.TempDir(), "nonexistent-coat.yaml")
+	srv := NewServer(WithCoatFile(missingCoat))
 	if len(srv.loadErrs) == 0 {
 		t.Fatal("expected load errors for non-existent coat file")
 	}
