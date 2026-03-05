@@ -28,7 +28,6 @@ Functions below 100% coverage, ordered by impact:
 | Function | Coverage | Notes |
 |----------|----------|-------|
 | `cmd/trenchcoat/main.go:main` | 0% | CLI entrypoint — cannot unit test |
-| `cmd/trenchcoat/proxy.go:setGODEBUG` | 100% | Covered by `TestSetGODEBUG` |
 | `proxy.go:Start` | 72.7% | Listen/mkdir error paths |
 | `trenchcoat.go:Start` | 80.0% | Start error path |
 | `coat/query.go:UnmarshalYAML` | 80.0% | Missing invalid type branch |
