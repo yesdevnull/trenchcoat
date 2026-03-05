@@ -35,6 +35,7 @@ type Config struct {
 	Filter       string
 	StripHeaders []string
 	Dedupe       string // overwrite, skip, append
+	CaptureBody  *bool  // capture request body in coat files; nil defaults to true
 	Verbose      bool
 	Logger       *slog.Logger
 }
@@ -307,6 +308,10 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 		coatDef.Coats[0].Request.Headers = reqHeaders
 	}
 
+	if p.captureBodyEnabled() && len(reqBody) > 0 {
+		coatDef.Coats[0].Request.Body = string(reqBody)
+	}
+
 	if r.URL.RawQuery != "" {
 		coatDef.Coats[0].Request.Query = r.URL.RawQuery
 	}
@@ -360,6 +365,10 @@ func (p *Proxy) generateFilename(method, path string, status int) string {
 	default: // overwrite
 		return fmt.Sprintf("%s.yaml", base)
 	}
+}
+
+func (p *Proxy) captureBodyEnabled() bool {
+	return p.config.CaptureBody == nil || *p.config.CaptureBody
 }
 
 func (p *Proxy) isStrippedHeader(header string) bool {
@@ -420,6 +429,7 @@ type coatRequest struct {
 	URI     string            `yaml:"uri"`
 	Headers map[string]string `yaml:"headers,omitempty"`
 	Query   string            `yaml:"query,omitempty"`
+	Body    string            `yaml:"body,omitempty"`
 }
 
 type coatResponse struct {

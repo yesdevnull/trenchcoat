@@ -477,6 +477,114 @@ func TestProxy_CompressedUpstream(t *testing.T) {
 	}
 }
 
+func TestProxy_CaptureBody_Default(t *testing.T) {
+	// By default, CaptureBody should be true and POST request bodies should be captured.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"received": "` + string(body) + `"}`))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Post(p.URL()+"/api/v1/users", "application/json", strings.NewReader(`{"name": "alice"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read captured file: %v", err)
+	}
+	contentStr := string(content)
+
+	// The captured coat should contain the request body.
+	if !strings.Contains(contentStr, `{"name": "alice"}`) {
+		t.Fatalf("expected captured coat to contain request body, got:\n%s", contentStr)
+	}
+}
+
+func TestProxy_CaptureBody_Disabled(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		CaptureBody:  boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Post(p.URL()+"/api/v1/users", "application/json", strings.NewReader(`{"name": "bob"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read captured file: %v", err)
+	}
+	contentStr := string(content)
+
+	// With CaptureBody disabled, the request body should NOT appear in the coat.
+	if strings.Contains(contentStr, `{"name": "bob"}`) {
+		t.Fatalf("expected no request body in captured coat when CaptureBody is disabled, got:\n%s", contentStr)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 func TestSanitisePath(t *testing.T) {
 	tests := []struct {
 		input    string
