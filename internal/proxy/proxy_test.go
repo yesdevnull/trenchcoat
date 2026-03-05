@@ -849,6 +849,101 @@ func TestProxy_RedirectHandling(t *testing.T) {
 	}
 }
 
+func TestProxy_NoHeaders(t *testing.T) {
+	// When NoHeaders is true, captured coat files must not contain ANY headers
+	// in either the request or response sections.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "abc123")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL: upstream.URL,
+		WriteDir:    writeDir,
+		NoHeaders:   true,
+		Dedupe:      "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	req, err := http.NewRequest("GET", p.URL()+"/api/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read captured file: %v", err)
+	}
+
+	// Parse the captured coat and verify no headers are present.
+	var captured coat.File
+	if err := yaml.Unmarshal(content, &captured); err != nil {
+		t.Fatalf("failed to unmarshal captured coat: %v", err)
+	}
+	if len(captured.Coats) == 0 {
+		t.Fatal("expected at least one coat")
+	}
+	c := captured.Coats[0]
+
+	// Neither request nor response headers should be in the coat file.
+	contentStr := string(content)
+	if strings.Contains(contentStr, "headers:") {
+		t.Fatalf("expected no headers in captured coat with NoHeaders=true, got:\n%s", contentStr)
+	}
+
+	// The response body should still be captured.
+	if c.Response.Body != `{"ok": true}` {
+		t.Fatalf("expected response body to be captured, got %q", c.Response.Body)
+	}
+}
+
+func TestProxy_NoHeaders_StripHeaders_MutuallyExclusive(t *testing.T) {
+	// NoHeaders and StripHeaders cannot both be set.
+	_, err := proxy.New(proxy.Config{
+		UpstreamURL:  "http://localhost:9999",
+		WriteDir:     t.TempDir(),
+		NoHeaders:    true,
+		StripHeaders: []string{"Authorization"},
+		Dedupe:       "overwrite",
+	})
+	if err == nil {
+		t.Fatal("expected error when both NoHeaders and StripHeaders are set")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got: %v", err)
+	}
+}
+
 func TestSanitisePath(t *testing.T) {
 	tests := []struct {
 		input    string

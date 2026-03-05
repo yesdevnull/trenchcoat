@@ -24,6 +24,7 @@ func newProxyCmd() *cobra.Command {
 	cmd.Flags().String("write-dir", ".", "Directory to write captured coat files to")
 	cmd.Flags().String("filter", "", "Only capture requests whose URI matches this glob pattern")
 	cmd.Flags().StringSlice("strip-headers", []string{"Authorization", "Cookie", "Set-Cookie"}, "Headers to redact from captured coat files")
+	cmd.Flags().Bool("no-headers", false, "Omit all headers from captured coat files (mutually exclusive with --strip-headers)")
 	cmd.Flags().String("dedupe", "overwrite", "Deduplication strategy: overwrite, skip, or append")
 	cmd.Flags().Bool("capture-body", true, "Capture request body in coat files for any request with a body")
 	cmd.Flags().Bool("verbose", false, "Log each proxied request and capture event")
@@ -39,7 +40,17 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	writeDir, _ := cmd.Flags().GetString("write-dir")
 	filter, _ := cmd.Flags().GetString("filter")
 	stripHeaders, _ := cmd.Flags().GetStringSlice("strip-headers")
+	noHeaders, _ := cmd.Flags().GetBool("no-headers")
 	dedupe, _ := cmd.Flags().GetString("dedupe")
+
+	// --no-headers and --strip-headers are mutually exclusive.
+	if noHeaders && cmd.Flags().Changed("strip-headers") {
+		return fmt.Errorf("--no-headers and --strip-headers are mutually exclusive")
+	}
+	// When --no-headers is set, clear strip-headers so they don't leak into Config.
+	if noHeaders {
+		stripHeaders = nil
+	}
 	captureBody, _ := cmd.Flags().GetBool("capture-body")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	logFormat, _ := cmd.Flags().GetString("log-format")
@@ -69,6 +80,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		WriteDir:     writeDir,
 		Filter:       filter,
 		StripHeaders: stripHeaders,
+		NoHeaders:    noHeaders,
 		Dedupe:       dedupe,
 		CaptureBody:  &captureBody,
 		Verbose:      verbose,
