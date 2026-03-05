@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,6 +27,7 @@ func newProxyCmd() *cobra.Command {
 	cmd.Flags().Bool("capture-body", true, "Capture request body in coat files for any request with a body")
 	cmd.Flags().Bool("verbose", false, "Log each proxied request and capture event")
 	cmd.Flags().String("log-format", "text", "Log output format: text or json")
+	cmd.Flags().Bool("allow-negative-serial", false, "Allow TLS certificates with negative serial numbers (legacy CAs, older tooling)")
 
 	return cmd
 }
@@ -41,7 +43,17 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	logFormat, _ := cmd.Flags().GetString("log-format")
 
+	allowNegativeSerial, _ := cmd.Flags().GetBool("allow-negative-serial")
+
 	logger := newLogger(logFormat)
+
+	// Allow TLS certificates with negative serial numbers when opted in.
+	// Go 1.23+ rejects these by default. See https://go.dev/doc/godebug#x509negativeserial.
+	if allowNegativeSerial {
+		if err := os.Setenv("GODEBUG", appendGODEBUG(os.Getenv("GODEBUG"), "x509negativeserial=1")); err != nil {
+			logger.Warn("failed to set GODEBUG for x509negativeserial", "error", err)
+		}
+	}
 
 	// Validate dedupe value.
 	switch dedupe {
@@ -89,4 +101,13 @@ func runProxy(cmd *cobra.Command, args []string) error {
 
 	logger.Info("proxy stopped")
 	return nil
+}
+
+// appendGODEBUG appends a key=value pair to an existing GODEBUG string,
+// preserving any previously set values.
+func appendGODEBUG(existing, kv string) string {
+	if existing == "" {
+		return kv
+	}
+	return existing + "," + kv
 }

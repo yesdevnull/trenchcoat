@@ -246,76 +246,73 @@ should verify that:
 
 #### 5. Gzip decompression errors in proxy capture (proxy.go:258-271)
 
-Two error branches in `captureCoat` are untested:
+~~Two error branches in `captureCoat` are untested.~~ **Now covered** by
+`TestProxy_InvalidGzipBody`, which verifies the fallback to raw body when
+`gzip.NewReader` fails. The `io.ReadAll` mid-stream failure remains untested
+but is low risk.
 
-- `gzip.NewReader` returns an error (e.g. response claims gzip but body is
-  not valid gzip data).
-- `io.ReadAll` on the gzip reader fails mid-stream.
+#### 5b. `shouldCapture` with invalid filter pattern (proxy.go:242-251)
 
-Both should log errors and fall back to writing the raw (compressed) body.
+~~The `path.Match` error path is not tested.~~ **Now covered** by
+`TestProxy_Filter_InvalidPattern`, which verifies that a malformed glob
+causes `shouldCapture` to return false and no coat file is written.
 
-#### 5. `shouldCapture` with invalid filter pattern (proxy.go:242-251, 71.4%)
+#### 6. `singleJoiningSlash` branch coverage (proxy.go:395-404)
 
-When the `--filter` glob pattern is malformed (e.g. contains `[` without
-closing `]`), `path.Match` returns an error. The function logs it and returns
-`false`. This error path is not tested.
-
-#### 6. `singleJoiningSlash` branch coverage (proxy.go:395-404, 66.7%)
-
-This utility function has four branches for combining paths with/without
-trailing/leading slashes. Only two branches are exercised. Add table-driven
-tests covering all four combinations:
-
-- `a/` + `/b` → `a/b` (both slashes — trim one)
-- `a/` + `b` → `a/b` (only a has slash)
-- `a` + `/b` → `a/b` (only b has slash)
-- `a` + `b` → `a/b` (neither has slash — add one)
+~~Only two branches are exercised.~~ **Now covered** by `TestSingleJoiningSlash`
+with table-driven cases for the reachable branches: both slashes (upstream
+trailing + request leading) and default (no trailing upstream slash). The
+`!aslash && !bslash` branch is unreachable via HTTP since request paths
+always have a leading `/`.
 
 #### 7. Query matching edge cases (matcher.go:275-307)
 
-- Multiple values for the same query param (e.g. `?tag=a&tag=b`): the matcher
-  uses `r.URL.Query().Get()` which returns the first value. There's no test
-  confirming this behavior.
-- Query params with special characters in values (URL-encoded chars).
-- Glob patterns in query value matching (e.g. `page: "*"`).
+~~No tests confirming these behaviors.~~ **Now covered** by:
 
-#### 8. Matcher precedence tie-breaking (matcher.go:216-235, 88.9%)
+- `TestMatch_QueryMap_MultipleValues` — multiple values for the same query
+  param (e.g. `?tag=a&tag=b`), verifying any-value matching.
+- `TestMatch_QueryMap_SpecialChars` — URL-encoded query values.
+- `TestMatch_QueryMap_GlobValues` — glob patterns in query value matching.
 
-The `betterThan` function has a branch for equal scores + equal URI mode that
-falls through to file-order precedence. This tie-breaking path is not
-exercised by any test.
+#### 8. Matcher precedence tie-breaking (matcher.go:216-235)
+
+~~The file-order tie-breaking path is not exercised.~~ **Now covered** by
+`TestMatch_Precedence_GlobSameLiteralLen_FileOrder`, which uses two glob
+patterns that both match the same request with equal literal prefix length,
+verifying the earlier-defined coat wins.
 
 ### Priority 3: Lower Impact — Hardening and Completeness
 
 #### 9. Config file parsing errors (config.go)
 
-No test covers what happens when a config file exists but contains invalid
-YAML. Viper's behavior in this case should be verified (error returned vs
-silent ignore).
+~~No test covers malformed YAML config files.~~ **Now covered** by
+`TestLoad_InvalidYAML` (malformed YAML returns error) and
+`TestLoad_CwdConfig_YmlExtension` (`.trenchcoat.yml` discovery in CWD).
 
 #### 10. Public API with invalid coat files
 
-`WithCoatFile` with a non-existent file or a file containing validation errors
-— verify that errors are surfaced or handled gracefully. Currently the errors
-from `LoadPaths` are stored but the public API's behavior is untested.
+~~The public API's error behavior is untested.~~ **Now covered** by
+`TestWithCoatFile_NonExistent` (non-existent file produces load errors)
+and `TestWithCoatFile_InvalidCoat` (coat without URI produces validation
+errors).
 
 #### 11. Server with no coats handling requests
 
-`NewServer()` with no options, then making HTTP requests — verify consistent
-404 behavior with the expected JSON error body.
+~~No test for empty server 404 behavior.~~ **Now covered** by
+`TestNewServer_NoCoats_Returns404`, which verifies the JSON error body.
 
 #### 12. Proxy redirect handling
 
-The proxy uses `http.ErrUseLastResponse` to prevent following redirects, but
-there are no tests verifying that 3xx responses are captured and relayed
-as-is to the client.
+~~No tests for 3xx capture/relay.~~ **Now covered** by
+`TestProxy_RedirectHandling`, which verifies a 301 is captured as-is
+and relayed to the client without following the redirect.
 
 #### 13. Concurrent requests during server reload
 
-No test verifies correct behavior when requests arrive while `Reload` is
-in progress. The server uses `sync.RWMutex` for this — a test should confirm
-no races and that requests either see the old or new coats (never a partial
-state).
+~~No test for concurrent reload correctness.~~ **Now covered** by
+`TestServe_Reload_ConcurrentRequests`, which fires 100 concurrent requests
+while toggling 20 reloads and verifies each response is coherent. Runs
+with `-race` to detect data races.
 
 ---
 

@@ -1,10 +1,3 @@
-// Allow proxying to upstream servers whose TLS certificates have negative
-// serial numbers. Go 1.23+ rejects these by default, but they exist in the
-// wild (e.g. legacy CAs, self-signed certs from older tooling). See
-// https://go.dev/doc/godebug#x509negativeserial.
-//
-//go:debug x509negativeserial=1
-
 package main
 
 import (

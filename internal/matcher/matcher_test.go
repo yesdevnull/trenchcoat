@@ -466,23 +466,25 @@ func TestMatch_Precedence_FileOrderTieBreaker(t *testing.T) {
 }
 
 func TestMatch_Precedence_GlobSameLiteralLen_FileOrder(t *testing.T) {
-	// Two glob URIs with identical literal prefix length — tie-breaks by file order.
+	// Two glob URIs with identical literal prefix length that both match the
+	// same request — tie-breaks by file definition order (first defined wins).
 	coats := []coat.Coat{
 		{
 			Name:     "first-glob",
-			Request:  coat.Request{Method: "GET", URI: "/api/v1/*"},
+			Request:  coat.Request{Method: "GET", URI: "/api/*"},
 			Response: &coat.Response{Code: 200},
 		},
 		{
 			Name:     "second-glob",
-			Request:  coat.Request{Method: "GET", URI: "/api/v2/*"},
+			Request:  coat.Request{Method: "GET", URI: "/api/?"},
 			Response: &coat.Response{Code: 201},
 		},
 	}
 	m := matcher.New(coats)
 
-	// /api/v1/x only matches first-glob.
-	req := newRequest(t, "GET", "/api/v1/x", nil)
+	// /api/x matches both patterns (same literalLen "/api/" = 5).
+	// First-defined coat should win via file-order tie-break.
+	req := newRequest(t, "GET", "/api/x", nil)
 	result := m.Match(req)
 	if result == nil {
 		t.Fatal("expected a match")
