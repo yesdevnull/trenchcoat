@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yesdevnull/trenchcoat/coatfile.schema.json",
+  "title": "Trenchcoat Coat File",
+  "description": "Schema for Trenchcoat coat files defining HTTP request/response mocks.",
+  "type": "object",
+  "required": ["coats"],
+  "additionalProperties": false,
+  "properties": {
+    "coats": {
+      "description": "List of coat (mock) definitions.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/coat"
+      }
+    }
+  },
+  "$defs": {
+    "coat": {
+      "description": "An individual request/response mock definition.",
+      "type": "object",
+      "required": ["request"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Descriptive name for this coat.",
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "response": {
+          "$ref": "#/$defs/response"
+        },
+        "responses": {
+          "description": "Ordered list of responses for sequence mode. Mutually exclusive with 'response'.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/response"
+          },
+          "minItems": 1
+        },
+        "sequence": {
+          "description": "Sequence mode for plural responses. Only valid with 'responses'.",
+          "type": "string",
+          "enum": ["cycle", "once"]
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["response"],
+          "properties": {
+            "responses": false,
+            "sequence": false
+          }
+        },
+        {
+          "required": ["responses"],
+          "properties": {
+            "response": false
+          }
+        }
+      ]
+    },
+    "request": {
+      "description": "Matching criteria for an incoming HTTP request.",
+      "type": "object",
+      "required": ["uri"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "description": "HTTP method to match. Defaults to GET. Use ANY to match all methods.",
+          "type": "string",
+          "default": "GET"
+        },
+        "uri": {
+          "description": "URI path to match. Supports exact strings, glob patterns (*/?) and regex (~/prefix).",
+          "type": "string"
+        },
+        "headers": {
+          "description": "Subset of headers to match. Values support glob patterns (*/?).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "query": {
+          "description": "Query string matching. Either a raw query string or a map of key/value pairs (values support glob patterns).",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "body": {
+          "description": "Request body to match (exact string comparison). When omitted, any body matches.",
+          "type": "string"
+        }
+      }
+    },
+    "response": {
+      "description": "Mock response to return.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "HTTP status code. Defaults to 200.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "default": 200
+        },
+        "headers": {
+          "description": "Response headers to set.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "description": "Response body string. Mutually exclusive with 'body_file'.",
+          "type": "string"
+        },
+        "body_file": {
+          "description": "Path to a file whose contents are used as the response body. Resolved relative to the coat file location. Mutually exclusive with 'body'.",
+          "type": "string"
+        },
+        "delay_ms": {
+          "description": "Delay in milliseconds before sending the response.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "not": {
+        "required": ["body", "body_file"]
+      }
+    }
+  }
+}
