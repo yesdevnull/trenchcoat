@@ -170,7 +170,9 @@ func TestServe_TLS_ExpiredCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool.AppendCertsFromPEM(certPEM)
+	if !pool.AppendCertsFromPEM(certPEM) {
+		t.Fatal("failed to append certificate to pool")
+	}
 
 	client := &http.Client{
 		Transport: &http.Transport{

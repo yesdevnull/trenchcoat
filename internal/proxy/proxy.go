@@ -69,7 +69,7 @@ func New(cfg Config) (*Proxy, error) {
 	}
 
 	if cfg.NoHeaders && len(cfg.StripHeaders) > 0 {
-		return nil, fmt.Errorf("--no-headers and --strip-headers are mutually exclusive")
+		return nil, fmt.Errorf("NoHeaders and StripHeaders are mutually exclusive")
 	}
 
 	if cfg.UpstreamURL == "" {

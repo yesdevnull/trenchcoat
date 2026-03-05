@@ -5,7 +5,7 @@ Analysis of the Trenchcoat test suite, run with Go 1.25.7 using
 
 ## Current Coverage
 
-**180 tests, all passing, race detector clean. Overall: 90.5% of statements.**
+**184 tests, all passing, race detector clean. Overall: 90.5% of statements.**
 
 | Package | Coverage | Tests |
 |---------|----------|-------|
