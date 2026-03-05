@@ -45,6 +45,10 @@ type Response = coat.Response
 // QueryField represents the query field which can be either a string or a map.
 type QueryField = coat.QueryField
 
+// StringPtr returns a pointer to s. It is a convenience helper for constructing
+// Request literals with a body constraint.
+var StringPtr = coat.StringPtr
+
 // Server wraps the internal Trenchcoat server for use in tests.
 type Server struct {
 	// URL is the base URL of the running server (e.g. "http://127.0.0.1:12345").

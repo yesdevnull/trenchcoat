@@ -309,7 +309,8 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	}
 
 	if p.captureBodyEnabled() && len(reqBody) > 0 {
-		coatDef.Coats[0].Request.Body = string(reqBody)
+		body := string(reqBody)
+		coatDef.Coats[0].Request.Body = &body
 	}
 
 	if r.URL.RawQuery != "" {
@@ -429,7 +430,7 @@ type coatRequest struct {
 	URI     string            `yaml:"uri"`
 	Headers map[string]string `yaml:"headers,omitempty"`
 	Query   string            `yaml:"query,omitempty"`
-	Body    string            `yaml:"body,omitempty"`
+	Body    *string           `yaml:"body,omitempty"`
 }
 
 type coatResponse struct {

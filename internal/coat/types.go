@@ -22,7 +22,7 @@ type Request struct {
 	URI     string      `yaml:"uri" json:"uri"`
 	Headers StringMap   `yaml:"headers,omitempty" json:"headers,omitempty"`
 	Query   *QueryField `yaml:"query,omitempty" json:"query,omitempty"`
-	Body    string      `yaml:"body,omitempty" json:"body,omitempty"`
+	Body    *string     `yaml:"body,omitempty" json:"body,omitempty"`
 }
 
 // Response defines the mock response to return.
@@ -36,6 +36,10 @@ type Response struct {
 
 // StringMap is a map[string]string used for headers.
 type StringMap = map[string]string
+
+// StringPtr returns a pointer to s. It is a convenience helper for constructing
+// Request literals with a body constraint.
+func StringPtr(s string) *string { return &s }
 
 // QueryField represents the query field which can be either a string or a map.
 type QueryField struct {
