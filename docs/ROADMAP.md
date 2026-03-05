@@ -48,7 +48,41 @@ srv.Requests("get-users") []http.Request   // return captured requests
 Implementation: add a `sync.Map` of coat-name → `[]capturedRequest` in the
 server, populated in `handleRequest`. Minimal changes, high test utility.
 
-#### 3. Response Templating (Basic Variable Substitution)
+#### 3. Coat-Level Variable Substitution
+
+**Benefit:** High | **Complexity:** Low
+
+Coat files often contain environment-specific values — base URLs, hostnames,
+port numbers — that differ between dev and production. Currently you need
+separate coat files or manual editing. Variable substitution lets a single coat
+file work across environments.
+
+Variables use `${VAR_NAME}` syntax with an optional default value separated by
+`:-`, inspired by Flux's variable substitution for Kubernetes manifests:
+
+```yaml
+coats:
+  - name: get-users
+    request:
+      uri: "${API_PREFIX:-/api/v1}/users"
+    response:
+      code: 200
+      headers:
+        Location: "${BASE_URL:-http://localhost:8080}/api/v1/users"
+      body: '{"endpoint": "${BASE_URL:-http://localhost:8080}/api/v1/users"}'
+```
+
+Variables are resolved from environment variables at coat load time. If a
+variable is unset and has no default, it is left as-is (or optionally raises a
+validation warning). This is pure string substitution — no template engine
+needed, just a single `regexp.ReplaceAllStringFunc` pass over the raw file
+content before YAML/JSON parsing.
+
+This pairs well with the proxy capture workflow: capture coats against a real
+upstream, then replace the hardcoded host with `${BASE_URL}` so the same coats
+work against any environment.
+
+#### 4. Response Templating (Request-Aware Interpolation)
 
 **Benefit:** High | **Complexity:** Low-Medium
 
@@ -71,7 +105,12 @@ Start with a minimal set (path, method, query params, path segments, request
 body) using Go's `text/template`. Keep it optional — plain strings work exactly
 as before.
 
-#### 4. Public API TLS Support
+Note: this is distinct from coat-level variable substitution (item 3).
+Variables (item 3) are resolved once at load time from the environment and
+affect all fields. Response templating is evaluated per-request and only applies
+to response bodies, interpolating values from the incoming request.
+
+#### 5. Public API TLS Support
 
 **Benefit:** Medium | **Complexity:** Low
 
@@ -91,7 +130,7 @@ test startup and returns an `*http.Client` with the right CA pool. Noted in
 
 ### Tier 2 — Medium Benefit, Low-Medium Complexity
 
-#### 5. Latency Simulation Profiles
+#### 6. Latency Simulation Profiles
 
 **Benefit:** Medium | **Complexity:** Low
 
@@ -112,7 +151,7 @@ trenchcoat serve --latency-profile slow  # adds 200-500ms to all responses
 
 Useful for testing timeout handling and retry logic.
 
-#### 6. Proxy-to-Coat Workflow Improvements
+#### 7. Proxy-to-Coat Workflow Improvements
 
 **Benefit:** Medium | **Complexity:** Low
 
@@ -127,7 +166,7 @@ Small quality-of-life improvements to the proxy capture mode:
 
 These are small, independent changes that improve the proxy-to-mock workflow.
 
-#### 7. Conditional Responses (Request-Aware Sequences)
+#### 8. Conditional Responses (Request-Aware Sequences)
 
 **Benefit:** Medium | **Complexity:** Medium
 
@@ -148,7 +187,7 @@ sequence: match  # try to match conditions first, fall through to default
 This would let a single coat handle both the "normal" and "retry" cases
 without needing separate coat definitions.
 
-#### 8. Import / Compose Coat Files
+#### 9. Import / Compose Coat Files
 
 **Benefit:** Medium | **Complexity:** Medium
 
@@ -190,7 +229,7 @@ The `defaults` approach is simpler and solves 80% of the duplication problem.
 
 ### Tier 3 — Nice to Have
 
-#### 9. Stateful Mock Behaviour
+#### 10. Stateful Mock Behaviour
 
 **Benefit:** Medium | **Complexity:** High
 
@@ -199,7 +238,7 @@ GET /users returns the created user." This is powerful but adds significant
 complexity. Consider whether this is better handled by test-level logic using
 the programmatic API rather than in coat files.
 
-#### 10. OpenAPI / Swagger Import
+#### 11. OpenAPI / Swagger Import
 
 **Benefit:** Medium | **Complexity:** High
 
@@ -207,7 +246,7 @@ Generate coat files from an OpenAPI spec. Useful for bootstrapping mocks for
 large APIs, but the mapping from schema to realistic response bodies requires
 heuristics. Could be a standalone `trenchcoat generate` subcommand.
 
-#### 11. Passthrough Mode (Existing Proposal)
+#### 12. Passthrough Mode (Existing Proposal)
 
 **Benefit:** Medium | **Complexity:** Medium
 
@@ -265,7 +304,7 @@ custom implementation for `**` support.
 Support recursive directory loading with organisational conventions (e.g.
 `mocks/users/list.yaml`, `mocks/auth/login.yaml`) and potential shared default
 headers/config at directory level. **Declined** — the flat structure with
-explicit `--coats` paths is sufficient. The `defaults` block proposal (item 8)
+explicit `--coats` paths is sufficient. The `defaults` block proposal (item 9)
 addresses the shared config need without the complexity.
 
 ### ~~Request Body Matching~~ (Implemented)
