@@ -799,7 +799,10 @@ coats:
 `)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	loaded, _ := coat.LoadPaths([]string{dir})
+	loaded, errs := coat.LoadPaths([]string{dir})
+	if len(errs) > 0 {
+		t.Fatalf("failed to load coats: %v", errs)
+	}
 	srv := server.New(loaded, server.Config{Logger: logger})
 	_, err := srv.Start("127.0.0.1:0")
 	if err != nil {
@@ -820,9 +823,12 @@ coats:
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
-	go watchCoats(ctx, logger, srv, []string{dir})
+	done := make(chan struct{})
+	go func() {
+		watchCoats(ctx, logger, srv, []string{dir})
+		close(done)
+	}()
 
 	// Give the watcher time to start.
 	time.Sleep(100 * time.Millisecond)
@@ -868,23 +874,35 @@ coats:
 	}
 
 	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
+	}
 }
 
 func TestWatchCoats_NonCoatFileIgnored(t *testing.T) {
 	dir := t.TempDir()
 	coatFile := filepath.Join(dir, "coat.yaml")
+	// Use a once sequence so we can detect if a reload resets the counter.
 	writeTestFile(t, coatFile, `
 coats:
   - name: "stable"
     request:
       uri: "/stable"
-    response:
-      code: 200
-      body: "stable"
+    responses:
+      - code: 200
+        body: "first"
+      - code: 200
+        body: "second"
+    sequence: once
 `)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	loaded, _ := coat.LoadPaths([]string{dir})
+	loaded, errs := coat.LoadPaths([]string{dir})
+	if len(errs) > 0 {
+		t.Fatalf("failed to load coats: %v", errs)
+	}
 	srv := server.New(loaded, server.Config{Logger: logger})
 	_, err := srv.Start("127.0.0.1:0")
 	if err != nil {
@@ -892,29 +910,50 @@ coats:
 	}
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	go watchCoats(ctx, logger, srv, []string{dir})
-	time.Sleep(100 * time.Millisecond)
-
-	// Write a non-coat file — should NOT trigger reload.
-	writeTestFile(t, filepath.Join(dir, "README.md"), "# not a coat")
-	time.Sleep(200 * time.Millisecond)
-
-	// The coat should still be working (no reload broke it).
 	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// Consume the first response in the once sequence.
 	resp, err := httpClient.Get(srv.URL() + "/stable")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != 200 || string(body) != "stable" {
-		t.Fatalf("expected stable response after non-coat file change, got %d %q", resp.StatusCode, body)
+	if string(body) != "first" {
+		t.Fatalf("expected first response 'first', got %q", body)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		watchCoats(ctx, logger, srv, []string{dir})
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	// Write a non-coat file — should NOT trigger reload.
+	writeTestFile(t, filepath.Join(dir, "README.md"), "# not a coat")
+	time.Sleep(200 * time.Millisecond)
+
+	// If reload happened, the sequence counter would reset and we'd get "first"
+	// again. If no reload, we get "second" (the next in the once sequence).
+	resp, err = httpClient.Get(srv.URL() + "/stable")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "second" {
+		t.Fatalf("expected 'second' (no reload), got %q — reload was incorrectly triggered", body)
 	}
 
 	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
+	}
 }
 
 func TestWatchCoats_CreateNewCoatFile(t *testing.T) {
@@ -931,7 +970,10 @@ coats:
 `)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	loaded, _ := coat.LoadPaths([]string{dir})
+	loaded, errs := coat.LoadPaths([]string{dir})
+	if len(errs) > 0 {
+		t.Fatalf("LoadPaths errors: %v", errs)
+	}
 	srv := server.New(loaded, server.Config{Logger: logger})
 	_, err := srv.Start("127.0.0.1:0")
 	if err != nil {
@@ -940,9 +982,12 @@ coats:
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
-	go watchCoats(ctx, logger, srv, []string{dir})
+	done := make(chan struct{})
+	go func() {
+		watchCoats(ctx, logger, srv, []string{dir})
+		close(done)
+	}()
 	time.Sleep(100 * time.Millisecond)
 
 	// Create a new coat file — triggers Create event.
@@ -976,6 +1021,11 @@ coats:
 	}
 
 	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
+	}
 }
 
 func TestWatchCoats_RemoveCoatFile(t *testing.T) {
@@ -992,7 +1042,10 @@ coats:
 `)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	loaded, _ := coat.LoadPaths([]string{dir})
+	loaded, errs := coat.LoadPaths([]string{dir})
+	if len(errs) > 0 {
+		t.Fatalf("LoadPaths errors: %v", errs)
+	}
 	srv := server.New(loaded, server.Config{Logger: logger})
 	_, err := srv.Start("127.0.0.1:0")
 	if err != nil {
@@ -1001,9 +1054,12 @@ coats:
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
-	go watchCoats(ctx, logger, srv, []string{dir})
+	done := make(chan struct{})
+	go func() {
+		watchCoats(ctx, logger, srv, []string{dir})
+		close(done)
+	}()
 	time.Sleep(100 * time.Millisecond)
 
 	// Remove the coat file — triggers Remove event.
@@ -1030,6 +1086,35 @@ coats:
 	}
 
 	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
+	}
+}
+
+// --- setGODEBUG tests ---
+
+func TestSetGODEBUG(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string
+		kv       string
+		want     string
+	}{
+		{"empty", "", "x509negativeserial=1", "x509negativeserial=1"},
+		{"unrelated_key", "httplaxcontentlength=1", "x509negativeserial=1", "httplaxcontentlength=1,x509negativeserial=1"},
+		{"replace_existing", "x509negativeserial=0", "x509negativeserial=1", "x509negativeserial=1"},
+		{"replace_among_others", "httplaxcontentlength=1,x509negativeserial=0,http2debug=1", "x509negativeserial=1", "httplaxcontentlength=1,x509negativeserial=1,http2debug=1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := setGODEBUG(tt.existing, tt.kv)
+			if got != tt.want {
+				t.Errorf("setGODEBUG(%q, %q) = %q, want %q", tt.existing, tt.kv, got, tt.want)
+			}
+		})
+	}
 }
 
 // --- helpers ---

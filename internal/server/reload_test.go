@@ -164,7 +164,8 @@ func TestServe_Reload_ConcurrentRequests(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := http.Get(srv.URL() + "/data")
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Get(srv.URL() + "/data")
 			if err != nil {
 				errs <- "request error: " + err.Error()
 				return
