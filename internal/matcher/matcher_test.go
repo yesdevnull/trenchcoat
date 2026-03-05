@@ -2,6 +2,7 @@ package matcher_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/yesdevnull/trenchcoat/internal/coat"
@@ -520,11 +521,156 @@ func TestMatch_RegexURI_DoubleSlash(t *testing.T) {
 	assertEqual(t, "name", "regex-protocol", result.Name)
 }
 
+// --- Request body matching ---
+
+func TestMatch_BodyExact(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "post-create",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+				Body:   `{"name": "alice"}`,
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice"}`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match when body matches exactly")
+	}
+	assertEqual(t, "name", "post-create", result.Name)
+}
+
+func TestMatch_BodyMismatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "post-create",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+				Body:   `{"name": "alice"}`,
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "bob"}`)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match when body does not match")
+	}
+}
+
+func TestMatch_BodyNotSpecified_MatchesAnyBody(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "post-any-body",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `anything here`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match — coat without body should match any body")
+	}
+}
+
+func TestMatch_Precedence_BodySpecificityWins(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "generic-post",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+			},
+			Response: &coat.Response{Code: 200},
+		},
+		{
+			Name: "specific-post",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+				Body:   `{"name": "alice"}`,
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice"}`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	assertEqual(t, "name", "specific-post", result.Name)
+}
+
+func TestMatch_DifferentBodies_DifferentCoats(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "create-alice",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+				Body:   `{"name": "alice"}`,
+			},
+			Response: &coat.Response{Code: 201, Body: "alice created"},
+		},
+		{
+			Name: "create-bob",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+				Body:   `{"name": "bob"}`,
+			},
+			Response: &coat.Response{Code: 201, Body: "bob created"},
+		},
+	}
+	m := matcher.New(coats)
+
+	reqAlice := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice"}`)
+	result := m.Match(reqAlice)
+	if result == nil {
+		t.Fatal("expected match for alice")
+	}
+	assertEqual(t, "name", "create-alice", result.Name)
+
+	reqBob := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "bob"}`)
+	result = m.Match(reqBob)
+	if result == nil {
+		t.Fatal("expected match for bob")
+	}
+	assertEqual(t, "name", "create-bob", result.Name)
+}
+
 // --- Helpers ---
 
 func newRequest(t *testing.T, method, uri string, headers map[string]string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, "http://localhost"+uri, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return req
+}
+
+func newRequestWithBody(t *testing.T, method, uri string, headers map[string]string, body string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://localhost"+uri, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}

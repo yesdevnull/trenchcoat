@@ -4,6 +4,8 @@
 package matcher
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"path"
 	"regexp"
@@ -92,7 +94,7 @@ func New(coats []coat.Coat) *Matcher {
 		e.method = method
 		e.methodIsANY = method == "ANY"
 
-		// Compute specificity: count of qualifiers (headers + query presence).
+		// Compute specificity: count of qualifiers (headers + query + body presence).
 		if len(c.Request.Headers) > 0 {
 			e.specificity += len(c.Request.Headers)
 		}
@@ -103,6 +105,9 @@ func New(coats []coat.Coat) *Matcher {
 				e.specificity++
 			}
 		}
+		if c.Request.Body != "" {
+			e.specificity++
+		}
 
 		entries = append(entries, e)
 	}
@@ -112,10 +117,29 @@ func New(coats []coat.Coat) *Matcher {
 
 // Match finds the best matching coat for an incoming request.
 // Returns nil if no coat matches.
+//
+// If any coat specifies a request body, the request body is read and buffered.
+// The request body is replaced with a new reader so it remains available.
 func (m *Matcher) Match(req *http.Request) *MatchResult {
 	type candidate struct {
 		entry *entry
 		score matchScore
+	}
+
+	// Lazily read the request body only if needed for body matching.
+	var reqBody []byte
+	var bodyRead bool
+	getBody := func() []byte {
+		if bodyRead {
+			return reqBody
+		}
+		bodyRead = true
+		if req.Body != nil {
+			reqBody, _ = io.ReadAll(req.Body)
+			_ = req.Body.Close()
+			req.Body = io.NopCloser(bytes.NewReader(reqBody))
+		}
+		return reqBody
 	}
 
 	var candidates []candidate
@@ -131,6 +155,9 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 			continue
 		}
 		if !matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
+			continue
+		}
+		if !matchesBody(e, getBody) {
 			continue
 		}
 
@@ -304,6 +331,14 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 	}
 
 	return true
+}
+
+func matchesBody(e *entry, getBody func() []byte) bool {
+	if e.coat.Request.Body == "" {
+		return true // No body constraint — matches anything.
+	}
+	body := getBody()
+	return string(body) == e.coat.Request.Body
 }
 
 // globMatch performs simple glob matching on a string value.

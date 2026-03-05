@@ -111,3 +111,48 @@ func TestQueryField_UnmarshalJSON_InvalidType(t *testing.T) {
 		t.Fatalf("expected 'expected string or object' error, got: %v", err)
 	}
 }
+
+func TestParseYAML_RequestBody(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "body.yaml")
+	content := `coats:
+  - name: post-with-body
+    request:
+      method: POST
+      uri: /api/v1/users
+      body: '{"name": "alice"}'
+    response:
+      code: 201
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if len(f.Coats) != 1 {
+		t.Fatalf("expected 1 coat, got %d", len(f.Coats))
+	}
+	if f.Coats[0].Request.Body != `{"name": "alice"}` {
+		t.Fatalf("expected request body, got %q", f.Coats[0].Request.Body)
+	}
+}
+
+func TestParseJSON_RequestBody(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "body.json")
+	content := `{"coats": [{"name": "post-json", "request": {"method": "POST", "uri": "/api", "body": "hello"}, "response": {"code": 200}}]}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if f.Coats[0].Request.Body != "hello" {
+		t.Fatalf("expected request body 'hello', got %q", f.Coats[0].Request.Body)
+	}
+}

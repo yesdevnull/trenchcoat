@@ -1,9 +1,11 @@
 package trenchcoat
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -139,5 +141,57 @@ func TestNewServer_NoOptions(t *testing.T) {
 	}
 	if len(srv.coats) != 0 {
 		t.Fatalf("expected 0 coats, got %d", len(srv.coats))
+	}
+}
+
+func TestWithCoat_BodyMatching(t *testing.T) {
+	srv := NewServer(
+		WithCoats(
+			Coat{
+				Name:    "create-alice",
+				Request: Request{Method: "POST", URI: "/api/v1/users", Body: `{"name": "alice"}`},
+				Response: &Response{
+					Code: 201,
+					Body: "alice created",
+				},
+			},
+			Coat{
+				Name:    "create-bob",
+				Request: Request{Method: "POST", URI: "/api/v1/users", Body: `{"name": "bob"}`},
+				Response: &Response{
+					Code: 201,
+					Body: "bob created",
+				},
+			},
+		),
+	)
+	srv.Start(t)
+
+	// POST with alice body.
+	resp, err := httpClient.Post(srv.URL+"/api/v1/users", "application/json", strings.NewReader(`{"name": "alice"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 201 {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	if string(body) != "alice created" {
+		t.Fatalf("expected 'alice created', got %q", body)
+	}
+
+	// POST with bob body.
+	resp2, err := httpClient.Post(srv.URL+"/api/v1/users", "application/json", strings.NewReader(`{"name": "bob"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != 201 {
+		t.Fatalf("expected 201, got %d", resp2.StatusCode)
+	}
+	if string(body2) != "bob created" {
+		t.Fatalf("expected 'bob created', got %q", body2)
 	}
 }

@@ -22,6 +22,7 @@ type Request struct {
 	URI     string      `yaml:"uri" json:"uri"`
 	Headers StringMap   `yaml:"headers,omitempty" json:"headers,omitempty"`
 	Query   *QueryField `yaml:"query,omitempty" json:"query,omitempty"`
+	Body    string      `yaml:"body,omitempty" json:"body,omitempty"`
 }
 
 // Response defines the mock response to return.
