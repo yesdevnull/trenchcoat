@@ -721,12 +721,15 @@ func TestProxy_Filter_InvalidPattern(t *testing.T) {
 }
 
 func TestSingleJoiningSlash(t *testing.T) {
-	// Exercise all four branches of singleJoiningSlash by proxying
-	// through upstreams with different path configurations.
+	// Exercise the branches of singleJoiningSlash by proxying through
+	// upstreams with different base path configurations. HTTP request
+	// paths always start with "/", so the only reachable branches are:
+	//   - both_slashes: upstream trailing "/" + request leading "/" → trim one
+	//   - default:      upstream no trailing "/" + request leading "/" → concatenate
 	tests := []struct {
 		name         string
 		upstreamPath string // Upstream base path (may have trailing slash).
-		requestPath  string // Client request path (may have leading slash).
+		requestPath  string // Client request path (always has leading slash).
 		wantContains string // Expected path fragment upstream receives.
 	}{
 		{
@@ -736,7 +739,7 @@ func TestSingleJoiningSlash(t *testing.T) {
 			wantContains: "/base/endpoint",
 		},
 		{
-			name:         "neither_slash",
+			name:         "no_trailing_slash",
 			upstreamPath: "/base",
 			requestPath:  "/endpoint",
 			wantContains: "/base/endpoint",
