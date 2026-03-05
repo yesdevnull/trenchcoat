@@ -136,11 +136,12 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 	// Lazily read the request body only if needed for body matching.
 	// Bounded to maxBodyMatchSize to avoid unbounded memory allocation.
 	var reqBody []byte
+	var reqBodyStr string
 	var bodyRead bool
 	var bodyReadErr bool
-	getBody := func() ([]byte, bool) {
+	getBody := func() (string, bool) {
 		if bodyRead {
-			return reqBody, bodyReadErr
+			return reqBodyStr, bodyReadErr
 		}
 		bodyRead = true
 		if req.Body != nil {
@@ -162,6 +163,9 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 				reqBody = allRead
 			}
 
+			// Convert to string once to avoid repeated allocations in matchesBody.
+			reqBodyStr = string(reqBody)
+
 			// Reconstitute req.Body as the bytes already read plus the remaining
 			// unread original body so downstream handlers see the full body, and
 			// ensure Close() still delegates to the original body's Close().
@@ -173,7 +177,7 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 				Closer: origBody,
 			}
 		}
-		return reqBody, bodyReadErr
+		return reqBodyStr, bodyReadErr
 	}
 
 	var candidates []candidate
@@ -367,7 +371,7 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 	return true
 }
 
-func matchesBody(e *entry, getBody func() ([]byte, bool)) bool {
+func matchesBody(e *entry, getBody func() (string, bool)) bool {
 	if e.coat.Request.Body == nil {
 		return true // No body constraint — matches anything.
 	}
@@ -375,7 +379,7 @@ func matchesBody(e *entry, getBody func() ([]byte, bool)) bool {
 	if readErr {
 		return false // Treat read errors as non-match.
 	}
-	return string(body) == *e.coat.Request.Body
+	return body == *e.coat.Request.Body
 }
 
 // globMatch performs simple glob matching on a string value.
