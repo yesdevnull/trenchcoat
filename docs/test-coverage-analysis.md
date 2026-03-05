@@ -10,12 +10,12 @@ Analysis of the Trenchcoat test suite, run with Go 1.25.7 using
 | Package | Coverage | Tests |
 |---------|----------|-------|
 | `trenchcoat` (public API) | **92.9%** | 10 |
-| `cmd/trenchcoat` | **78.2%** | 24 |
-| `internal/coat` | **95.5%** | 36 |
+| `cmd/trenchcoat` | **78.2%** | 29 |
+| `internal/coat` | **95.5%** | 37 |
 | `internal/config` | **88.9%** | 6 |
-| `internal/matcher` | **94.6%** | 36 |
-| `internal/proxy` | **90.3%** | 29 |
-| `internal/server` | **97.0%** | 26 |
+| `internal/matcher` | **94.6%** | 41 |
+| `internal/proxy` | **90.3%** | 28 |
+| `internal/server` | **97.0%** | 29 |
 
 All packages are above 78% coverage.
 

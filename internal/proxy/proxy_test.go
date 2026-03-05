@@ -777,7 +777,12 @@ func TestSingleJoiningSlash(t *testing.T) {
 			}
 			_ = resp.Body.Close()
 
-			receivedPath := <-pathCh
+			var receivedPath string
+			select {
+			case receivedPath = <-pathCh:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("timed out waiting for upstream request")
+			}
 			if !strings.Contains(receivedPath, tt.wantContains) {
 				t.Fatalf("expected upstream path to contain %q, got %q", tt.wantContains, receivedPath)
 			}

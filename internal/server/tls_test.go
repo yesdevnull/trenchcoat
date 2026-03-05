@@ -160,8 +160,7 @@ func TestServe_TLS_ExpiredCert(t *testing.T) {
 	srv := server.New(coats, server.Config{})
 	_, err := srv.StartTLS("127.0.0.1:0", certFile, keyFile)
 	if err != nil {
-		t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
-		return
+		t.Fatalf("failed to start TLS server with expired cert: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
 
