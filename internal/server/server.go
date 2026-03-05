@@ -2,10 +2,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +20,14 @@ import (
 	"github.com/yesdevnull/trenchcoat/internal/matcher"
 )
 
+// CapturedRequest records details of an incoming request that matched a coat.
+type CapturedRequest struct {
+	Method string
+	URI    string
+	Header http.Header
+	Body   string
+}
+
 // Server is the Trenchcoat mock HTTP server.
 type Server struct {
 	httpServer *http.Server
@@ -28,6 +38,9 @@ type Server struct {
 	mu      sync.RWMutex
 	matcher *matcher.Matcher
 	coats   []coat.LoadedCoat
+
+	callsMu sync.Mutex
+	calls   map[string][]CapturedRequest
 }
 
 // Config holds server configuration.
@@ -47,6 +60,7 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 		verbose: cfg.Verbose,
 		matcher: matcher.New(extractCoats(loaded)),
 		coats:   loaded,
+		calls:   make(map[string][]CapturedRequest),
 	}
 
 	s.httpServer = &http.Server{
@@ -141,12 +155,21 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	allCoats := s.coats
 	s.mu.RUnlock()
 
-	result := m.Match(r)
+	var result *matcher.MatchResult
+	var mismatches []matcher.Mismatch
+	if s.verbose {
+		result, mismatches = m.MatchVerbose(r)
+	} else {
+		result = m.Match(r)
+	}
 
 	if result == nil {
-		s.writeNoMatch(w, r, start)
+		s.writeNoMatch(w, r, start, mismatches)
 		return
 	}
+
+	// Record the matched request for call counting / assertions.
+	s.recordCall(result.Name, r)
 
 	// Handle exhausted sequences.
 	if result.Exhausted {
@@ -161,7 +184,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	} else if result.Coat.Response != nil {
 		resp = *result.Coat.Response
 	} else {
-		s.writeNoMatch(w, r, start)
+		s.writeNoMatch(w, r, start, nil)
 		return
 	}
 
@@ -206,14 +229,41 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	s.logRequest(r, result.Name, code, start)
 }
 
-func (s *Server) writeNoMatch(w http.ResponseWriter, r *http.Request, start time.Time) {
+func (s *Server) writeNoMatch(w http.ResponseWriter, r *http.Request, start time.Time, mismatches []matcher.Mismatch) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error":  "no matching coat",
-		"method": r.Method,
-		"uri":    r.URL.Path,
-	})
+
+	if len(mismatches) > 0 {
+		// Log each near-miss.
+		for _, mm := range mismatches {
+			s.logger.Info("near miss",
+				"coat", mm.CoatName,
+				"reason", mm.Reason,
+			)
+		}
+
+		type nearMiss struct {
+			CoatName string `json:"coat_name"`
+			Reason   string `json:"reason"`
+		}
+		nearMisses := make([]nearMiss, len(mismatches))
+		for i, mm := range mismatches {
+			nearMisses[i] = nearMiss{CoatName: mm.CoatName, Reason: mm.Reason}
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":       "no matching coat",
+			"method":      r.Method,
+			"uri":         r.URL.Path,
+			"near_misses": nearMisses,
+		})
+	} else {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error":  "no matching coat",
+			"method": r.Method,
+			"uri":    r.URL.Path,
+		})
+	}
 	s.logRequest(r, "", http.StatusNotFound, start)
 }
 
@@ -241,6 +291,53 @@ func (s *Server) logRequest(r *http.Request, coatName string, status int, start 
 		"status", status,
 		slog.Duration("duration", time.Since(start)),
 	)
+}
+
+// recordCall captures request details for the matched coat.
+func (s *Server) recordCall(name string, r *http.Request) {
+	cr := CapturedRequest{
+		Method: r.Method,
+		URI:    r.URL.RequestURI(),
+		Header: r.Header.Clone(),
+	}
+
+	// Read body for recording (restore it for downstream use).
+	if r.Body != nil {
+		bodyBytes, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if err == nil {
+			cr.Body = string(bodyBytes)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
+	s.callsMu.Lock()
+	s.calls[name] = append(s.calls[name], cr)
+	s.callsMu.Unlock()
+}
+
+// CallCount returns the number of times the named coat was matched.
+func (s *Server) CallCount(name string) int {
+	s.callsMu.Lock()
+	defer s.callsMu.Unlock()
+	return len(s.calls[name])
+}
+
+// Calls returns all captured requests for the named coat.
+func (s *Server) Calls(name string) []CapturedRequest {
+	s.callsMu.Lock()
+	defer s.callsMu.Unlock()
+	reqs := s.calls[name]
+	out := make([]CapturedRequest, len(reqs))
+	copy(out, reqs)
+	return out
+}
+
+// ResetCalls clears all recorded call data.
+func (s *Server) ResetCalls() {
+	s.callsMu.Lock()
+	s.calls = make(map[string][]CapturedRequest)
+	s.callsMu.Unlock()
 }
 
 // resolveBodyFile resolves a body_file path relative to the coat file's location.

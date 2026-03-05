@@ -18,11 +18,12 @@ type Coat struct {
 
 // Request defines the matching criteria for an incoming HTTP request.
 type Request struct {
-	Method  string      `yaml:"method,omitempty" json:"method,omitempty"`
-	URI     string      `yaml:"uri" json:"uri"`
-	Headers StringMap   `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Query   *QueryField `yaml:"query,omitempty" json:"query,omitempty"`
-	Body    *string     `yaml:"body,omitempty" json:"body,omitempty"`
+	Method    string      `yaml:"method,omitempty" json:"method,omitempty"`
+	URI       string      `yaml:"uri" json:"uri"`
+	Headers   StringMap   `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Query     *QueryField `yaml:"query,omitempty" json:"query,omitempty"`
+	Body      *string     `yaml:"body,omitempty" json:"body,omitempty"`
+	BodyMatch string      `yaml:"body_match,omitempty" json:"body_match,omitempty"`
 }
 
 // Response defines the mock response to return.

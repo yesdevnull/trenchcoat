@@ -26,12 +26,21 @@
 package trenchcoat
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/yesdevnull/trenchcoat/internal/coat"
 	"github.com/yesdevnull/trenchcoat/internal/server"
 )
+
+// CapturedRequest records details of an incoming request that matched a coat.
+type CapturedRequest struct {
+	Method string
+	URI    string
+	Header http.Header
+	Body   string
+}
 
 // Coat is an individual request/response mock definition.
 type Coat = coat.Coat
@@ -138,4 +147,49 @@ func (s *Server) Stop() {
 	if s.inner != nil {
 		_ = s.inner.Shutdown(5 * time.Second)
 	}
+}
+
+// AssertCalled fails the test if the named coat was never called.
+func (s *Server) AssertCalled(t testing.TB, name string) {
+	t.Helper()
+	if s.inner.CallCount(name) == 0 {
+		t.Errorf("trenchcoat: expected coat %q to have been called, but it was not", name)
+	}
+}
+
+// AssertCalledN fails the test if the named coat was not called exactly n times.
+func (s *Server) AssertCalledN(t testing.TB, name string, n int) {
+	t.Helper()
+	got := s.inner.CallCount(name)
+	if got != n {
+		t.Errorf("trenchcoat: expected coat %q to have been called %d time(s), got %d", name, n, got)
+	}
+}
+
+// AssertNotCalled fails the test if the named coat was called.
+func (s *Server) AssertNotCalled(t testing.TB, name string) {
+	t.Helper()
+	if got := s.inner.CallCount(name); got > 0 {
+		t.Errorf("trenchcoat: expected coat %q not to have been called, but it was called %d time(s)", name, got)
+	}
+}
+
+// Requests returns all captured requests for the named coat.
+func (s *Server) Requests(name string) []CapturedRequest {
+	internal := s.inner.Calls(name)
+	out := make([]CapturedRequest, len(internal))
+	for i, cr := range internal {
+		out[i] = CapturedRequest{
+			Method: cr.Method,
+			URI:    cr.URI,
+			Header: cr.Header,
+			Body:   cr.Body,
+		}
+	}
+	return out
+}
+
+// ResetCalls clears all recorded call data.
+func (s *Server) ResetCalls() {
+	s.inner.ResetCalls()
 }

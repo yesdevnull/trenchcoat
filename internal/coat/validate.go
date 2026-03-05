@@ -85,6 +85,22 @@ func validateCoat(index int, c Coat) []*ValidationError {
 		}
 	}
 
+	// Validate body_match field.
+	if c.Request.BodyMatch != "" {
+		validModes := map[string]bool{"exact": true, "glob": true, "contains": true, "regex": true}
+		if !validModes[c.Request.BodyMatch] {
+			errs = append(errs, mkErr(fmt.Sprintf("request.body_match must be one of 'exact', 'glob', 'contains', 'regex', got %q", c.Request.BodyMatch)))
+		}
+		if c.Request.Body == nil {
+			errs = append(errs, mkErr("request.body_match requires request.body to be set"))
+		}
+		if c.Request.BodyMatch == "regex" && c.Request.Body != nil {
+			if _, err := regexp.Compile(*c.Request.Body); err != nil {
+				errs = append(errs, mkErr(fmt.Sprintf("request.body has invalid regex %q: %v", *c.Request.Body, err)))
+			}
+		}
+	}
+
 	// Sequence is only valid with responses (plural).
 	if c.Sequence != "" {
 		if !hasResponses {
