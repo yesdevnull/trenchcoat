@@ -154,6 +154,74 @@ func TestMatch_GlobQuestionMark(t *testing.T) {
 	}
 }
 
+// --- Doublestar glob URI matching ---
+
+func TestMatch_DoublestarGlob(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "doublestar",
+			Request:  coat.Request{Method: "GET", URI: "/api/**/posts/*"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	// Should match multi-segment paths.
+	req := newRequest(t, "GET", "/api/v1/users/123/posts/456", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected doublestar glob match for multi-segment path")
+	}
+	assertEqual(t, "name", "doublestar", result.Name)
+
+	// Should match single-segment paths too (** matches zero or more).
+	req = newRequest(t, "GET", "/api/v1/posts/1", nil)
+	result = m.Match(req)
+	if result == nil {
+		t.Fatal("expected doublestar glob match for single-segment path")
+	}
+}
+
+func TestMatch_DoublestarGlob_NoMatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "doublestar",
+			Request:  coat.Request{Method: "GET", URI: "/api/**/posts"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users/123/comments", nil)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match for path not ending in /posts")
+	}
+}
+
+func TestMatch_Precedence_ExactBeforeDoublestar(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "doublestar",
+			Request:  coat.Request{Method: "GET", URI: "/api/**/users"},
+			Response: &coat.Response{Code: 200},
+		},
+		{
+			Name:     "exact",
+			Request:  coat.Request{Method: "GET", URI: "/api/v1/users"},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	assertEqual(t, "name", "exact", result.Name)
+}
+
 // --- Regex URI matching ---
 
 func TestMatch_RegexURI(t *testing.T) {

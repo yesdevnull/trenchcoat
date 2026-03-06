@@ -134,6 +134,9 @@ The CLI uses cobra with three subcommands:
 - `--no-headers` — Omit all headers from captured coat files (mutually exclusive with `--strip-headers`)
 - `--capture-body` — Capture request body in coat files (default: `true`)
 - `--dedupe` — Deduplication strategy: `overwrite` (default), `skip`, or `append`
+- `--pretty-json` — Pretty-print JSON response bodies in captured coat files
+- `--body-file-threshold` — Write response bodies larger than N bytes to separate files (0 = always inline)
+- `--name-template` — Custom template for captured coat file names (e.g. `{{.Method}}-{{.Path}}-{{.Status}}`)
 - `--verbose` — Log each proxied request and capture event
 - `--log-format` — Log format: `text` (default) or `json`
 
@@ -160,18 +163,20 @@ coats:
   - name: "descriptive-name"
     request:
       method: GET                    # optional, default GET. Supports ANY.
-      uri: "/api/v1/users"          # mandatory. Exact, glob (*/?), or regex (~/).
+      uri: "/api/v1/users"          # mandatory. Exact, glob (*/?/**), or regex (~/).
       headers:                       # optional, subset match with glob values
         Authorization: "Bearer *"
       query:                         # optional, string or map with glob values
         page: "1"
       body: '{"name": "alice"}'      # optional, exact string match on request body
+      body_match: exact              # optional: exact (default), glob, contains, regex
     response:
       code: 200
       headers:
         Content-Type: "application/json"
       body: '{"users": []}'         # or body_file: "./fixtures/data.json"
       delay_ms: 0
+      delay_jitter_ms: 0            # random delay added to delay_ms (0-N ms)
     # OR for sequences (mutually exclusive with response):
     responses:
       - code: 503
@@ -183,11 +188,12 @@ coats:
 
 ### URI Matching Modes
 
-| Mode  | Syntax          | Example                    |
-|-------|-----------------|----------------------------|
-| Exact | Plain string    | `/api/v1/users`            |
-| Glob  | Contains `*`/?  | `/api/v1/users/*`          |
-| Regex | `~/` prefix     | `~/api/v1/users/\d+`       |
+| Mode  | Syntax            | Example                    |
+|-------|-------------------|----------------------------|
+| Exact | Plain string      | `/api/v1/users`            |
+| Glob  | Contains `*`/?/`**` | `/api/v1/users/*`        |
+| Glob  | `**` multi-segment | `/api/**/posts/*`         |
+| Regex | `~/` prefix       | `~/api/v1/users/\d+`       |
 
 ### Match Precedence (highest to lowest)
 
@@ -212,6 +218,7 @@ coats:
 | cobra           | CLI framework                  |
 | viper           | Config file and flag binding   |
 | fsnotify        | Hot-reload file watching       |
+| doublestar/v4   | Glob matching with `**` support|
 | slog (stdlib)   | Structured logging             |
 | gopkg.in/yaml.v3 | YAML parsing                 |
 
@@ -250,6 +257,15 @@ Available options:
 - `WithCoats(...Coat)` — add multiple coats
 - `WithCoatFile(path)` — load coats from a YAML/JSON file
 - `WithVerbose()` — enable verbose request logging
+- `WithTLS(certFile, keyFile)` — use TLS with explicit certificate
+- `WithSelfSignedTLS()` — auto-generate self-signed cert; sets `srv.TLSClient`
+
+Assertion methods (available after `Start`):
+- `srv.AssertCalled(t, "name")` — coat called at least once
+- `srv.AssertCalledN(t, "name", n)` — called exactly N times
+- `srv.AssertNotCalled(t, "name")` — never called
+- `srv.Requests("name")` — return captured requests
+- `srv.ResetCalls()` — clear call data
 
 ## Testing Expectations
 

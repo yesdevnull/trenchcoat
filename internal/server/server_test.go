@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -632,6 +633,128 @@ func TestServe_BodyFile_SameCoatFilePath_NoAmbiguity(t *testing.T) {
 
 	assertEqual(t, "status", 200, resp.StatusCode)
 	assertEqual(t, "body", `{"ok": true}`, readBody(t, resp))
+}
+
+// --- Response templating ---
+
+func TestServe_ResponseTemplate_Method(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-method",
+				Request:  coat.Request{Method: "ANY", URI: "/echo"},
+				Response: &coat.Response{Code: 200, Body: `{"method": "{{.Method}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Post(srv.URL()+"/echo", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"method": "POST"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_Path(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-path",
+				Request:  coat.Request{Method: "GET", URI: "/api/v1/users/*"},
+				Response: &coat.Response{Code: 200, Body: `{"path": "{{.Path}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users/123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"path": "/api/v1/users/123"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_PathSegment(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-segment",
+				Request:  coat.Request{Method: "GET", URI: "/api/v1/users/*"},
+				Response: &coat.Response{Code: 200, Body: `{"id": "{{.Segment 3}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users/456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"id": "456"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_QueryParam(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-query",
+				Request:  coat.Request{Method: "GET", URI: "/search"},
+				Response: &coat.Response{Code: 200, Body: `{"q": "{{.Query "q"}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/search?q=hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"q": "hello"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_Body(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-body",
+				Request:  coat.Request{Method: "POST", URI: "/echo"},
+				Response: &coat.Response{Code: 200, Body: `{"echoed": "{{.Body}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Post(srv.URL()+"/echo", "text/plain", strings.NewReader("ping"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"echoed": "ping"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_NoTemplate(t *testing.T) {
+	// Bodies without {{ should be returned as-is.
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "plain",
+				Request:  coat.Request{Method: "GET", URI: "/plain"},
+				Response: &coat.Response{Code: 200, Body: `no templates here`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "body", "no templates here", readBody(t, resp))
 }
 
 // --- Helpers ---
