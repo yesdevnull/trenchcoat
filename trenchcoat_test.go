@@ -364,6 +364,62 @@ func TestResetCalls(t *testing.T) {
 	srv.AssertNotCalled(t, "resettable")
 }
 
+// --- Public API TLS Support ---
+
+func TestWithSelfSignedTLS(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "tls-test",
+			Request:  Request{Method: "GET", URI: "/secure"},
+			Response: &Response{Code: 200, Body: "secure-ok"},
+		}),
+		WithSelfSignedTLS(),
+	)
+	srv.Start(t)
+
+	if !strings.HasPrefix(srv.URL, "https://") {
+		t.Fatalf("expected https:// URL, got %q", srv.URL)
+	}
+	if srv.TLSClient == nil {
+		t.Fatal("expected TLSClient to be set")
+	}
+
+	resp, err := srv.TLSClient.Get(srv.URL + "/secure")
+	if err != nil {
+		t.Fatalf("TLS request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != "secure-ok" {
+		t.Fatalf("expected 'secure-ok', got %q", body)
+	}
+}
+
+func TestWithSelfSignedTLS_AssertionsWork(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "tls-assert",
+			Request:  Request{Method: "GET", URI: "/check"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+		WithSelfSignedTLS(),
+	)
+	srv.Start(t)
+
+	resp, err := srv.TLSClient.Get(srv.URL + "/check")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	srv.AssertCalled(t, "tls-assert")
+	srv.AssertCalledN(t, "tls-assert", 1)
+}
+
 func TestRequests_EmptyForUnknownCoat(t *testing.T) {
 	srv := NewServer(
 		WithCoat(Coat{

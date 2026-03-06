@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -206,9 +207,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		body = string(bodyBytes)
 	}
 
-	// Apply delay.
-	if resp.DelayMs > 0 {
-		time.Sleep(time.Duration(resp.DelayMs) * time.Millisecond)
+	// Apply delay with optional jitter.
+	if resp.DelayMs > 0 || resp.DelayJitterMs > 0 {
+		delay := resp.DelayMs
+		if resp.DelayJitterMs > 0 {
+			delay += rand.IntN(resp.DelayJitterMs)
+		}
+		if delay > 0 {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+		}
 	}
 
 	// Set response headers.

@@ -26,7 +26,18 @@
 package trenchcoat
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -66,10 +77,17 @@ type Server struct {
 	// Set after Start() is called.
 	URL string
 
-	coats    []coat.LoadedCoat
-	loadErrs []error
-	inner    *server.Server
-	verbose  bool
+	// TLSClient is an *http.Client configured to trust the server's TLS
+	// certificate. Only set when WithSelfSignedTLS or WithTLS is used.
+	TLSClient *http.Client
+
+	coats       []coat.LoadedCoat
+	loadErrs    []error
+	inner       *server.Server
+	verbose     bool
+	tlsCertFile string
+	tlsKeyFile  string
+	selfSigned  bool
 }
 
 // Option configures the Server.
@@ -107,6 +125,23 @@ func WithVerbose() Option {
 	}
 }
 
+// WithTLS configures the server to use TLS with the given certificate and key files.
+func WithTLS(certFile, keyFile string) Option {
+	return func(s *Server) {
+		s.tlsCertFile = certFile
+		s.tlsKeyFile = keyFile
+	}
+}
+
+// WithSelfSignedTLS generates an ephemeral self-signed certificate and
+// configures the server to use TLS. After Start is called, TLSClient is
+// set to an *http.Client that trusts the generated certificate.
+func WithSelfSignedTLS() Option {
+	return func(s *Server) {
+		s.selfSigned = true
+	}
+}
+
 // NewServer creates a new test server with the given options.
 // Call Start(t) to begin serving.
 func NewServer(opts ...Option) *Server {
@@ -130,16 +165,96 @@ func (s *Server) Start(t testing.TB) {
 		Verbose: s.verbose,
 	})
 
-	addr, err := s.inner.Start("127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("trenchcoat: failed to start server: %v", err)
+	useTLS := s.tlsCertFile != "" || s.selfSigned
+
+	if s.selfSigned {
+		certFile, keyFile, pool := generateSelfSignedCert(t)
+		s.tlsCertFile = certFile
+		s.tlsKeyFile = keyFile
+		s.TLSClient = &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					RootCAs: pool,
+				},
+			},
+		}
 	}
 
-	s.URL = "http://" + addr
+	if useTLS {
+		addr, err := s.inner.StartTLS("127.0.0.1:0", s.tlsCertFile, s.tlsKeyFile)
+		if err != nil {
+			t.Fatalf("trenchcoat: failed to start TLS server: %v", err)
+		}
+		s.URL = "https://" + addr
+	} else {
+		addr, err := s.inner.Start("127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("trenchcoat: failed to start server: %v", err)
+		}
+		s.URL = "http://" + addr
+	}
 
 	t.Cleanup(func() {
 		s.Stop()
 	})
+}
+
+// generateSelfSignedCert creates an ephemeral self-signed certificate for testing.
+func generateSelfSignedCert(t testing.TB) (certFile, keyFile string, pool *x509.CertPool) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("trenchcoat: failed to generate TLS key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("trenchcoat: failed to create certificate: %v", err)
+	}
+
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		t.Fatalf("trenchcoat: failed to create cert file: %v", err)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		t.Fatal(err)
+	}
+	_ = certOut.Close()
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("trenchcoat: failed to marshal key: %v", err)
+	}
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		t.Fatalf("trenchcoat: failed to create key file: %v", err)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		t.Fatal(err)
+	}
+	_ = keyOut.Close()
+
+	pool = x509.NewCertPool()
+	pool.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+
+	return certFile, keyFile, pool
 }
 
 // Stop shuts down the server.

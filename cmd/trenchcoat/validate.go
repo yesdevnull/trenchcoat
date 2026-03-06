@@ -15,12 +15,15 @@ func newValidateCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, errs := coat.LoadPaths(args)
-			if len(errs) > 0 {
-				for _, e := range errs {
+			result := coat.LoadPathsWithWarnings(args)
+			for _, w := range result.Warnings {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
+			}
+			if len(result.Errors) > 0 {
+				for _, e := range result.Errors {
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "error: %s\n", e)
 				}
-				return fmt.Errorf("validation failed with %d error(s)", len(errs))
+				return fmt.Errorf("validation failed with %d error(s)", len(result.Errors))
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "all coat files are valid")
 			return nil
