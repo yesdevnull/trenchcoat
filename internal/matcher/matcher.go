@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/yesdevnull/trenchcoat/internal/coat"
 )
 
@@ -81,7 +82,7 @@ func New(coats []coat.Coat) *Matcher {
 				continue
 			}
 			e.regex = re
-		} else if strings.ContainsAny(c.Request.URI, "*?") {
+		} else if strings.ContainsAny(c.Request.URI, "*?[") {
 			e.uriType = uriGlob
 			// Compute literal prefix length (characters before first wildcard).
 			for _, ch := range c.Request.URI {
@@ -530,7 +531,7 @@ func matchesURI(e *entry, reqPath string) bool {
 	case uriExact:
 		return e.coat.Request.URI == reqPath
 	case uriGlob:
-		matched, _ := path.Match(e.coat.Request.URI, reqPath)
+		matched, _ := doublestar.Match(e.coat.Request.URI, reqPath)
 		return matched
 	case uriRegex:
 		return e.regex.MatchString(reqPath)
@@ -617,7 +618,8 @@ func matchesBody(e *entry, getBody func() (string, bool)) bool {
 }
 
 // globMatch performs simple glob matching on a string value.
-// Supports * (any characters) and ? (single character).
+// Uses path.Match which supports * (any characters within a segment) and ? (single character).
+// This is used for header values, query values, and body matching — not URI paths.
 func globMatch(pattern, value string) bool {
 	matched, _ := path.Match(pattern, value)
 	return matched

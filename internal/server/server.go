@@ -14,7 +14,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/yesdevnull/trenchcoat/internal/coat"
@@ -172,6 +174,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Record the matched request for call counting / assertions.
 	s.recordCall(result.Name, r)
 
+	// Look up the coat's source file path for logging.
+	var coatFilePath string
+	if s.verbose {
+		for _, lc := range allCoats {
+			if lc.Coat.Name == result.Name {
+				coatFilePath = lc.FilePath
+				break
+			}
+		}
+	}
+
 	// Handle exhausted sequences.
 	if result.Exhausted {
 		s.writeSequenceExhausted(w, r, result.Name, start)
@@ -207,6 +220,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		body = string(bodyBytes)
 	}
 
+	// Render response body templates.
+	body = renderTemplate(body, r)
+
 	// Apply delay with optional jitter.
 	if resp.DelayMs > 0 || resp.DelayJitterMs > 0 {
 		delay := resp.DelayMs
@@ -233,7 +249,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, body)
 	}
 
-	s.logRequest(r, result.Name, code, start)
+	s.logMatchedRequest(r, result, coatFilePath, code, start)
 }
 
 func (s *Server) writeNoMatch(w http.ResponseWriter, r *http.Request, start time.Time, mismatches []matcher.Mismatch) {
@@ -284,6 +300,8 @@ func (s *Server) writeSequenceExhausted(w http.ResponseWriter, r *http.Request, 
 	s.logRequest(r, coatName, http.StatusNotFound, start)
 }
 
+const maxLogBodyLen = 200
+
 func (s *Server) logRequest(r *http.Request, coatName string, status int, start time.Time) {
 	if !s.verbose {
 		return
@@ -298,6 +316,43 @@ func (s *Server) logRequest(r *http.Request, coatName string, status int, start 
 		"status", status,
 		slog.Duration("duration", time.Since(start)),
 	)
+}
+
+func (s *Server) logMatchedRequest(r *http.Request, result *matcher.MatchResult, filePath string, status int, start time.Time) {
+	if !s.verbose {
+		return
+	}
+
+	attrs := []any{
+		"method", r.Method,
+		"uri", r.URL.RequestURI(),
+		"matched", true,
+		"coat", result.Name,
+		"status", status,
+	}
+
+	if filePath != "" {
+		attrs = append(attrs, "file", filePath)
+	}
+
+	// Log which qualifiers were decisive in the match.
+	var qualifiers []string
+	if len(result.Coat.Request.Headers) > 0 {
+		qualifiers = append(qualifiers, fmt.Sprintf("headers(%d)", len(result.Coat.Request.Headers)))
+	}
+	if result.Coat.Request.Query != nil {
+		qualifiers = append(qualifiers, "query")
+	}
+	if result.Coat.Request.Body != nil {
+		qualifiers = append(qualifiers, "body")
+	}
+	if len(qualifiers) > 0 {
+		attrs = append(attrs, "qualifiers", strings.Join(qualifiers, ","))
+	}
+
+	attrs = append(attrs, slog.Duration("duration", time.Since(start)))
+
+	s.logger.Info("request", attrs...)
 }
 
 // recordCall captures request details for the matched coat.
@@ -345,6 +400,72 @@ func (s *Server) ResetCalls() {
 	s.callsMu.Lock()
 	s.calls = make(map[string][]CapturedRequest)
 	s.callsMu.Unlock()
+}
+
+// templateData provides request-aware fields for response body templates.
+type templateData struct {
+	Method string
+	Path   string
+	Body   string
+	query  map[string][]string
+	path   string
+}
+
+// Query returns the first value for the given query parameter.
+func (td templateData) Query(key string) string {
+	vals := td.query[key]
+	if len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
+}
+
+// Segment returns the Nth path segment (0-indexed from root).
+// For path "/api/v1/users/123", Segment(0)="api", Segment(3)="123".
+func (td templateData) Segment(n int) string {
+	parts := strings.Split(strings.TrimPrefix(td.path, "/"), "/")
+	if n >= 0 && n < len(parts) {
+		return parts[n]
+	}
+	return ""
+}
+
+// renderTemplate parses and executes a Go text/template with request context.
+// Returns the original body if it contains no template directives or if parsing fails.
+func renderTemplate(body string, r *http.Request) string {
+	if !strings.Contains(body, "{{") {
+		return body
+	}
+
+	tmpl, err := template.New("response").Parse(body)
+	if err != nil {
+		return body
+	}
+
+	// Read request body for template use.
+	var reqBody string
+	if r.Body != nil {
+		bodyBytes, readErr := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if readErr == nil {
+			reqBody = string(bodyBytes)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
+	data := templateData{
+		Method: r.Method,
+		Path:   r.URL.Path,
+		Body:   reqBody,
+		query:  r.URL.Query(),
+		path:   r.URL.Path,
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return body
+	}
+	return buf.String()
 }
 
 // resolveBodyFile resolves a body_file path relative to the coat file's location.

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -30,15 +32,18 @@ var sanitiseRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // Config holds proxy configuration.
 type Config struct {
-	UpstreamURL  string
-	WriteDir     string
-	Filter       string
-	StripHeaders []string
-	NoHeaders    bool   // omit ALL headers from captured coat files
-	Dedupe       string // overwrite, skip, append
-	CaptureBody  *bool  // capture request body in coat files; nil defaults to true
-	Verbose      bool
-	Logger       *slog.Logger
+	UpstreamURL       string
+	WriteDir          string
+	Filter            string
+	StripHeaders      []string
+	NoHeaders         bool   // omit ALL headers from captured coat files
+	Dedupe            string // overwrite, skip, append
+	CaptureBody       *bool  // capture request body in coat files; nil defaults to true
+	PrettyJSON        bool   // pretty-print JSON response bodies in captured coats
+	BodyFileThreshold int    // write bodies larger than this to separate files (0 = always inline)
+	NameTemplate      string // custom template for captured coat file names
+	Verbose           bool
+	Logger            *slog.Logger
 }
 
 // Proxy is the Trenchcoat proxy capture server.
@@ -49,6 +54,8 @@ type Proxy struct {
 	listener   net.Listener
 	upstream   *url.URL
 	client     *http.Client
+
+	nameTmpl *template.Template // parsed name template (nil = default naming)
 
 	mu       sync.Mutex
 	counters map[string]int // for append dedup mode
@@ -104,10 +111,20 @@ func New(cfg Config) (*Proxy, error) {
 	}
 	transport.DisableCompression = true
 
+	var nameTmpl *template.Template
+	if cfg.NameTemplate != "" {
+		var err error
+		nameTmpl, err = template.New("name").Parse(cfg.NameTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("invalid name template: %w", err)
+		}
+	}
+
 	p := &Proxy{
 		config:   cfg,
 		logger:   cfg.Logger,
 		upstream: upstream,
+		nameTmpl: nameTmpl,
 		client: &http.Client{
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -295,6 +312,16 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 		}
 	}
 
+	responseBody := string(captureBody)
+
+	// Pretty-print JSON response bodies if enabled.
+	if p.config.PrettyJSON && json.Valid(captureBody) {
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, captureBody, "", "  "); err == nil {
+			responseBody = pretty.String()
+		}
+	}
+
 	coatDef := coatFile{
 		Coats: []coatEntry{
 			{
@@ -306,7 +333,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 				Response: coatResponse{
 					Code:    resp.StatusCode,
 					Headers: respHeaders,
-					Body:    string(captureBody),
+					Body:    responseBody,
 				},
 			},
 		},
@@ -332,6 +359,18 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 		return
 	}
 
+	// Write body to a separate file if threshold is exceeded.
+	if p.config.BodyFileThreshold > 0 && len(responseBody) > p.config.BodyFileThreshold {
+		bodyFileName := strings.TrimSuffix(filename, ".yaml") + "_body.txt"
+		bodyFilePath := filepath.Join(p.config.WriteDir, bodyFileName)
+		if err := os.WriteFile(bodyFilePath, []byte(responseBody), 0644); err != nil {
+			p.logger.Error("failed to write body file", "path", bodyFilePath, "error", err)
+			return
+		}
+		coatDef.Coats[0].Response.Body = ""
+		coatDef.Coats[0].Response.BodyFile = bodyFileName
+	}
+
 	data, err := yaml.Marshal(coatDef)
 	if err != nil {
 		p.logger.Error("failed to marshal coat", "error", err)
@@ -346,10 +385,34 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	}
 }
 
-func (p *Proxy) generateFilename(method, path string, status int) string {
+// nameTemplateData provides fields for custom file name templates.
+type nameTemplateData struct {
+	Method string
+	Path   string
+	Status int
+}
+
+func (p *Proxy) generateFilename(method, urlPath string, status int) string {
 	ts := time.Now().Unix()
-	sanitised := SanitisePath(path)
-	base := fmt.Sprintf("%s_%s_%d", method, sanitised, status)
+	sanitised := SanitisePath(urlPath)
+
+	var base string
+	if p.nameTmpl != nil {
+		var buf bytes.Buffer
+		data := nameTemplateData{
+			Method: method,
+			Path:   sanitised,
+			Status: status,
+		}
+		if err := p.nameTmpl.Execute(&buf, data); err != nil {
+			p.logger.Error("name template execution failed, using default", "error", err)
+			base = fmt.Sprintf("%s_%s_%d", method, sanitised, status)
+		} else {
+			base = buf.String()
+		}
+	} else {
+		base = fmt.Sprintf("%s_%s_%d", method, sanitised, status)
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -442,7 +505,8 @@ type coatRequest struct {
 }
 
 type coatResponse struct {
-	Code    int               `yaml:"code"`
-	Headers map[string]string `yaml:"headers,omitempty"`
-	Body    string            `yaml:"body,omitempty"`
+	Code     int               `yaml:"code"`
+	Headers  map[string]string `yaml:"headers,omitempty"`
+	Body     string            `yaml:"body,omitempty"`
+	BodyFile string            `yaml:"body_file,omitempty"`
 }

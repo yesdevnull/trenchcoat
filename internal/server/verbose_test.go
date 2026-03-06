@@ -62,6 +62,70 @@ func TestServe_VerboseLogging(t *testing.T) {
 	}
 }
 
+func TestServe_VerboseLogging_QualifiersAndFile(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "test.yaml")
+	if err := os.WriteFile(coatFile, []byte(`coats:
+  - name: auth-search
+    request:
+      method: GET
+      uri: /search
+      headers:
+        Authorization: "Bearer *"
+      query:
+        q: "*"
+    response:
+      code: 200
+      body: "results"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, errs := coat.LoadPaths([]string{coatFile})
+	if len(errs) > 0 {
+		t.Fatalf("load errors: %v", errs)
+	}
+
+	var logBuf bytes.Buffer
+	srv := server.New(loaded, server.Config{
+		Verbose: true,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	req, err := http.NewRequest("GET", srv.URL()+"/search?q=hello", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer token123")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	assertEqual(t, "status", 200, resp.StatusCode)
+
+	logOutput := logBuf.String()
+	// Should log the file path.
+	if !strings.Contains(logOutput, "file=") {
+		t.Errorf("expected 'file=' in log output, got:\n%s", logOutput)
+	}
+	// Should log qualifiers.
+	if !strings.Contains(logOutput, "qualifiers=") {
+		t.Errorf("expected 'qualifiers=' in log output, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "headers(1)") {
+		t.Errorf("expected 'headers(1)' in qualifiers, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "query") {
+		t.Errorf("expected 'query' in qualifiers, got:\n%s", logOutput)
+	}
+}
+
 func TestServe_EmptyBody(t *testing.T) {
 	coats := []coat.LoadedCoat{
 		{
