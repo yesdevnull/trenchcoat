@@ -198,6 +198,53 @@ func TestServe_DelayMs(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 }
 
+func TestServe_DelayJitter(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "jittery",
+				Request:  coat.Request{Method: "GET", URI: "/jitter"},
+				Response: &coat.Response{Code: 200, Body: "ok", DelayMs: 50, DelayJitterMs: 50},
+			},
+		},
+	})
+
+	// Make several requests — all should take at least 50ms (the base delay).
+	for range 3 {
+		start := time.Now()
+		resp, err := httpClient.Get(srv.URL() + "/jitter")
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_ = resp.Body.Close()
+		assertEqual(t, "status", 200, resp.StatusCode)
+		if elapsed < 50*time.Millisecond {
+			t.Fatalf("expected at least 50ms delay, got %v", elapsed)
+		}
+	}
+}
+
+func TestServe_DelayJitter_OnlyJitter(t *testing.T) {
+	// Jitter without base delay should still work.
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "jitter-only",
+				Request:  coat.Request{Method: "GET", URI: "/jitter-only"},
+				Response: &coat.Response{Code: 200, Body: "ok", DelayJitterMs: 10},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/jitter-only")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	assertEqual(t, "status", 200, resp.StatusCode)
+}
+
 func TestServe_GlobMatching(t *testing.T) {
 	srv := startServer(t, []coat.LoadedCoat{
 		{
