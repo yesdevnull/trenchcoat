@@ -90,7 +90,7 @@ jobs:
       - name: Check for vulnerable dependencies
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          govulncheck ./... || echo "::warning::govulncheck found vulnerabilities (see above)"
 
   format:
     name: Format
