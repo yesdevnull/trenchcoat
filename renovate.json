@@ -39,7 +39,8 @@
     {
       "description": "Pin Go toolchain to 1.25.x — allow patch updates but not minor version bumps",
       "matchDatasources": [
-        "golang-version"
+        "golang-version",
+        "github-actions"
       ],
       "matchPackageNames": [
         "go"
