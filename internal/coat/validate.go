@@ -119,8 +119,10 @@ func validateCoat(index int, c Coat) []*ValidationError {
 
 	// Validate body_match field.
 	if c.Request.BodyMatch != "" {
-		validModes := map[string]bool{"exact": true, "glob": true, "contains": true, "regex": true}
-		if !validModes[c.Request.BodyMatch] {
+		switch c.Request.BodyMatch {
+		case "exact", "glob", "contains", "regex":
+			// valid
+		default:
 			errs = append(errs, mkErr(fmt.Sprintf("request.body_match must be one of 'exact', 'glob', 'contains', 'regex', got %q", c.Request.BodyMatch)))
 		}
 		if c.Request.Body == nil {

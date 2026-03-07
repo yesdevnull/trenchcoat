@@ -297,7 +297,7 @@ func (s *Server) Requests(name string) []CapturedRequest {
 		out[i] = CapturedRequest{
 			Method: cr.Method,
 			URI:    cr.URI,
-			Header: cr.Header,
+			Header: cr.Header.Clone(),
 			Body:   cr.Body,
 		}
 	}
