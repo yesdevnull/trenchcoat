@@ -19,6 +19,18 @@
       ],
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Go version references in CI workflow",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.yaml$/"
+      ],
+      "matchStrings": [
+        "go-version:\\s*(?:\\[\")?\"?(?<currentValue>\\d+\\.\\d+\\.\\d+)\"?\\]?"
+      ],
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version"
     }
   ],
   "packageRules": [
