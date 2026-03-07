@@ -48,6 +48,16 @@
         "go"
       ],
       "allowedVersions": "/^1\\.25/"
+    },
+    {
+      "description": "Pin Go toolchain to 1.25.x — allow patch updates but not minor version bumps",
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchPackageNames": [
+        "go"
+      ],
+      "allowedVersions": "/^1\\.25/"
     }
   ]
 }
