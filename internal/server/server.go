@@ -300,8 +300,6 @@ func (s *Server) writeSequenceExhausted(w http.ResponseWriter, r *http.Request, 
 	s.logRequest(r, coatName, http.StatusNotFound, start)
 }
 
-const maxLogBodyLen = 200
-
 func (s *Server) logRequest(r *http.Request, coatName string, status int, start time.Time) {
 	if !s.verbose {
 		return
@@ -355,6 +353,10 @@ func (s *Server) logMatchedRequest(r *http.Request, result *matcher.MatchResult,
 	s.logger.Info("request", attrs...)
 }
 
+// maxRecordBodySize is the maximum request body size (in bytes) recorded for
+// call assertions. Bodies larger than this are truncated with an indicator.
+const maxRecordBodySize = 1 << 20 // 1 MiB
+
 // recordCall captures request details for the matched coat.
 func (s *Server) recordCall(name string, r *http.Request) {
 	cr := CapturedRequest{
@@ -363,14 +365,28 @@ func (s *Server) recordCall(name string, r *http.Request) {
 		Header: r.Header.Clone(),
 	}
 
-	// Read body for recording (restore it for downstream use).
+	// Read body for recording with a size limit to prevent DoS.
+	// The full body is restored for downstream use.
 	if r.Body != nil {
-		bodyBytes, err := io.ReadAll(r.Body)
-		_ = r.Body.Close()
-		if err == nil {
-			cr.Body = string(bodyBytes)
+		limited := io.LimitReader(r.Body, maxRecordBodySize+1)
+		headBytes, err := io.ReadAll(limited)
+		if err == nil && len(headBytes) > maxRecordBodySize {
+			cr.Body = string(headBytes[:maxRecordBodySize]) + "...(truncated)"
+			// Restore full body: head bytes + remaining unread body.
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: io.MultiReader(bytes.NewReader(headBytes), r.Body),
+				Closer: r.Body,
+			}
+		} else {
+			if err == nil {
+				cr.Body = string(headBytes)
+			}
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(headBytes))
 		}
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 
 	s.callsMu.Lock()

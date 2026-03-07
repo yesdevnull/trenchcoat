@@ -191,7 +191,9 @@ func TestSubstituteVars_EnvVar(t *testing.T) {
 func TestSubstituteVars_Default(t *testing.T) {
 	// Ensure the variable is NOT set.
 	t.Setenv("TRENCHCOAT_UNSET_VAR", "")
-	os.Unsetenv("TRENCHCOAT_UNSET_VAR")
+	if err := os.Unsetenv("TRENCHCOAT_UNSET_VAR"); err != nil {
+		t.Fatalf("failed to unset env var: %v", err)
+	}
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "defaults.yaml")
@@ -241,7 +243,9 @@ func TestSubstituteVars_EnvOverridesDefault(t *testing.T) {
 }
 
 func TestSubstituteVars_UnsetNoDefault_LeftAsIs(t *testing.T) {
-	os.Unsetenv("TRENCHCOAT_NONEXISTENT_AAAA")
+	if err := os.Unsetenv("TRENCHCOAT_NONEXISTENT_AAAA"); err != nil {
+		t.Fatalf("failed to unset env var: %v", err)
+	}
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "noop.yaml")

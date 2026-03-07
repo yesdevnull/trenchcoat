@@ -63,6 +63,14 @@ type Matcher struct {
 	entries []*entry
 }
 
+// resolvedName returns the coat's name, or a fallback like "coat[N]" if unnamed.
+func (e *entry) resolvedName() string {
+	if e.coat.Name != "" {
+		return e.coat.Name
+	}
+	return fmt.Sprintf("coat[%d]", e.index)
+}
+
 // New creates a Matcher from the given coats.
 func New(coats []coat.Coat) *Matcher {
 	entries := make([]*entry, 0, len(coats))
@@ -77,11 +85,11 @@ func New(coats []coat.Coat) *Matcher {
 			e.uriType = uriRegex
 			pattern := strings.TrimPrefix(c.Request.URI, "~")
 			re, err := regexp.Compile("^" + pattern + "$")
-			if err != nil {
-				// Skip coats with invalid regex (should be caught by validation).
-				continue
+			if err == nil {
+				e.regex = re
 			}
-			e.regex = re
+			// Invalid regex: keep the entry (for diagnostics) but leave e.regex
+			// nil so matchesURI will never match it.
 		} else if strings.ContainsAny(c.Request.URI, "*?[") {
 			e.uriType = uriGlob
 			// Compute literal prefix length (characters before first wildcard).
@@ -119,13 +127,13 @@ func New(coats []coat.Coat) *Matcher {
 		}
 
 		// Pre-compile body regex if body_match is "regex".
+		// Invalid regex: keep the entry (for diagnostics) but leave bodyRegex
+		// nil so matchesBody will never match it.
 		if c.Request.BodyMatch == "regex" && c.Request.Body != nil {
 			re, err := regexp.Compile(*c.Request.Body)
-			if err != nil {
-				// Skip coats with invalid body regex (should be caught by validation).
-				continue
+			if err == nil {
+				e.bodyRegex = re
 			}
-			e.bodyRegex = re
 		}
 
 		entries = append(entries, e)
@@ -229,7 +237,7 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 
 	best := candidates[0].entry
 	result := &MatchResult{
-		Name: best.coat.Name,
+		Name: best.resolvedName(),
 		Coat: best.coat,
 	}
 
@@ -329,10 +337,7 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 	var mismatches []Mismatch
 
 	for _, e := range m.entries {
-		name := e.coat.Name
-		if name == "" {
-			name = fmt.Sprintf("coat[%d]", e.index)
-		}
+		name := e.resolvedName()
 
 		if !matchesMethod(e, req.Method) {
 			mismatches = append(mismatches, Mismatch{
@@ -400,7 +405,7 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 
 	best := candidates[0].entry
 	result := &MatchResult{
-		Name: best.coat.Name,
+		Name: best.resolvedName(),
 		Coat: best.coat,
 	}
 
@@ -534,7 +539,7 @@ func matchesURI(e *entry, reqPath string) bool {
 		matched, _ := doublestar.Match(e.coat.Request.URI, reqPath)
 		return matched
 	case uriRegex:
-		return e.regex.MatchString(reqPath)
+		return e.regex != nil && e.regex.MatchString(reqPath)
 	}
 	return false
 }
