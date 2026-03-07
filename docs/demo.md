@@ -1,16 +1,16 @@
 # Trenchcoat Demo
 
-*2026-02-26T11:53:38Z by Showboat dev*
-<!-- showboat-id: b972c752-4b82-4dee-8822-61deeb51abf9 -->
+*2026-03-07T11:47:22Z by Showboat dev*
+<!-- showboat-id: fcf11ad7-4059-45a7-b630-af2ed6fd6448 -->
 
-Trenchcoat is an extensible mock, and proxy-to-mock, HTTP server written in Go. This demo walks through its core features.
+Trenchcoat is an extensible mock and proxy-to-mock HTTP server. This demo walks through its key features using the CLI.
 
-## Help Output
+## CLI Help
 
-Let's see the help output for each subcommand.
+Let's start by exploring the available commands.
 
 ```bash
-./trenchcoat --help
+trenchcoat --help
 ```
 
 ```output
@@ -35,7 +35,7 @@ Use "trenchcoat [command] --help" for more information about a command.
 ```
 
 ```bash
-./trenchcoat serve --help
+trenchcoat serve --help
 ```
 
 ```output
@@ -49,7 +49,6 @@ Flags:
   -h, --help                help for serve
       --log-format string   Log output format: text or json (default "text")
       --port int            Port to listen on (default 8080)
-      --tls-ca string       Path to CA certificate chain file (PEM)
       --tls-cert string     Path to TLS certificate file (PEM)
       --tls-key string      Path to TLS private key file (PEM)
       --verbose             Log each incoming request and match result
@@ -60,7 +59,7 @@ Global Flags:
 ```
 
 ```bash
-./trenchcoat proxy --help
+trenchcoat proxy --help
 ```
 
 ```output
@@ -70,25 +69,26 @@ Usage:
   trenchcoat proxy <upstream-url> [flags]
 
 Flags:
-      --capture-body            Capture request body in coat files for any request with a body (default true)
-      --dedupe string           Deduplication strategy: overwrite, skip, or append (default "overwrite")
-      --filter string           Only capture requests whose URI matches this glob pattern
-  -h, --help                    help for proxy
-      --log-format string       Log output format: text or json (default "text")
-      --port int                Port to listen on (default 8080)
-      --strip-headers strings   Headers to redact from captured coat files (default [Authorization,Cookie,Set-Cookie])
-      --tls-ca string           Path to CA certificate chain file (PEM)
-      --tls-cert string         Path to TLS certificate file (PEM)
-      --tls-key string          Path to TLS private key file (PEM)
-      --verbose                 Log each proxied request and capture event
-      --write-dir string        Directory to write captured coat files to (default ".")
+      --body-file-threshold int   Write response bodies larger than N bytes to separate files (0 = always inline)
+      --capture-body              Capture request body in coat files for any request with a body (default true)
+      --dedupe string             Deduplication strategy: overwrite, skip, or append (default "overwrite")
+      --filter string             Only capture requests whose URI matches this glob pattern
+  -h, --help                      help for proxy
+      --log-format string         Log output format: text or json (default "text")
+      --name-template string      Custom template for captured coat file names (e.g. {{.Method}}-{{.Path}}-{{.Status}})
+      --no-headers                Omit all headers from captured coat files (mutually exclusive with --strip-headers)
+      --port int                  Port to listen on (default 8080)
+      --pretty-json               Pretty-print JSON response bodies in captured coat files
+      --strip-headers strings     Headers to redact from captured coat files (default [Authorization,Cookie,Set-Cookie])
+      --verbose                   Log each proxied request and capture event
+      --write-dir string          Directory to write captured coat files to (default ".")
 
 Global Flags:
       --config string   Path to configuration file
 ```
 
 ```bash
-./trenchcoat validate --help
+trenchcoat validate --help
 ```
 
 ```output
@@ -106,237 +106,375 @@ Global Flags:
 
 ## Creating and Validating Coat Files
 
-Let's create some example coat files and validate them.
+A coat file defines request/response pairs. Let's create a few examples.
 
 ```bash
-mkdir -p /tmp/trenchcoat-demo/mocks && cat > /tmp/trenchcoat-demo/mocks/users.yaml << 'EOF'
-coats:
-  - name: "get-users"
-    request:
-      method: GET
-      uri: "/api/v1/users"
-    response:
-      code: 200
-      headers:
-        Content-Type: "application/json"
-      body: |
-        {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}
-
-  - name: "create-user"
-    request:
-      method: POST
-      uri: "/api/v1/users"
-    response:
-      code: 201
-      headers:
-        Content-Type: "application/json"
-        Location: "/api/v1/users/3"
-      body: |
-        {"id": 3, "name": "Charlie"}
-EOF
-echo "Created users.yaml"
+cat basic.yaml
 ```
 
 ```output
-Created users.yaml
+coats:
+  - name: get-users
+    request:
+      method: GET
+      uri: /api/v1/users
+    response:
+      code: 200
+      headers:
+        Content-Type: application/json
+      body: '{"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}'
+
+  - name: create-user
+    request:
+      method: POST
+      uri: /api/v1/users
+    response:
+      code: 201
+      headers:
+        Content-Type: application/json
+      body: '{"id": 3, "name": "Charlie"}'
 ```
 
 ```bash
-./trenchcoat validate /tmp/trenchcoat-demo/mocks/users.yaml
+trenchcoat validate basic.yaml
 ```
 
 ```output
 all coat files are valid
 ```
 
-## Validation Failure
+## Mock Server
 
-Now let's see what happens when a coat file has errors — both `response` and `responses` set, and a missing URI.
-
-```bash
-./trenchcoat validate /tmp/trenchcoat-demo/mocks/bad.yaml; echo "Exit code: $?"
-```
-
-```output
-error: /tmp/trenchcoat-demo/mocks/bad.yaml: broken-both: coat must have either 'response' or 'responses', not both
-error: /tmp/trenchcoat-demo/mocks/bad.yaml: no-uri: request.uri is required
-error: validation failed with 2 error(s)
-Exit code: 1
-```
-
-## Serving Mock Responses
-
-Start the mock server and make requests with curl.
+Start the mock server and make some requests.
 
 ```bash
-./trenchcoat serve --coats /tmp/trenchcoat-demo/mocks/users.yaml --port 19876 &
-sleep 0.5
-curl -s http://127.0.0.1:19876/api/v1/users | python3 -m json.tool
-echo "---"
-curl -s -X POST http://127.0.0.1:19876/api/v1/users | python3 -m json.tool
-echo "---"
-curl -s http://127.0.0.1:19876/not/found | python3 -m json.tool
-kill %1 2>/dev/null; wait 2>/dev/null
-```
+trenchcoat serve --coats basic.yaml --port 9100 &
+sleep 1
 
-```output
-time=2026-02-26T11:55:34.290Z level=INFO msg="coats loaded" count=2
-time=2026-02-26T11:55:34.291Z level=INFO msg="server started" address=0.0.0.0:19876
-{
-    "users": [
-        {
-            "id": 1,
-            "name": "Alice"
-        },
-        {
-            "id": 2,
-            "name": "Bob"
-        }
-    ]
-}
----
-{
-    "id": 3,
-    "name": "Charlie"
-}
----
-{
-    "error": "no matching coat",
-    "method": "GET",
-    "uri": "/not/found"
-}
-time=2026-02-26T11:55:35.118Z level=INFO msg="received signal, shutting down" signal=terminated
-time=2026-02-26T11:55:35.119Z level=INFO msg="server stopped"
-```
+echo "=== GET /api/v1/users ==="
+curl -s http://localhost:9100/api/v1/users | jq .
 
-## Glob and Regex URI Matching
-
-Create coats with glob and regex URI patterns, then test them.
-
-```bash
-./trenchcoat serve --coats /tmp/trenchcoat-demo/mocks/patterns.yaml --port 19877 &
-sleep 0.5
-echo "Glob match /api/users/42:"
-curl -s http://127.0.0.1:19877/api/users/42
 echo ""
-echo "Glob match /api/users/alice:"
-curl -s http://127.0.0.1:19877/api/users/alice
+echo "=== POST /api/v1/users ==="
+curl -s -X POST http://localhost:9100/api/v1/users | jq .
+
 echo ""
-echo "Regex match /api/items/123:"
-curl -s http://127.0.0.1:19877/api/items/123
-echo ""
-echo "Regex NO match /api/items/abc:"
-curl -s http://127.0.0.1:19877/api/items/abc
-echo ""
-kill %1 2>/dev/null; wait 2>/dev/null
-```
+echo "=== GET /unknown (no matching coat) ==="
+curl -s http://localhost:9100/unknown | jq .
 
-```output
-time=2026-02-26T11:55:58.101Z level=INFO msg="coats loaded" count=2
-time=2026-02-26T11:55:58.102Z level=INFO msg="server started" address=0.0.0.0:19877
-Glob match /api/users/42:
-{"match": "glob", "pattern": "/api/users/*"}
-Glob match /api/users/alice:
-{"match": "glob", "pattern": "/api/users/*"}
-Regex match /api/items/123:
-{"match": "regex", "pattern": "/api/items/\\d+"}
-Regex NO match /api/items/abc:
-{"error":"no matching coat","method":"GET","uri":"/api/items/abc"}
-
-time=2026-02-26T11:55:58.736Z level=INFO msg="received signal, shutting down" signal=terminated
-time=2026-02-26T11:55:58.736Z level=INFO msg="server stopped"
-```
-
-## Response Sequences
-
-Coats can define a sequence of responses. In cycle mode, responses rotate. Here a health endpoint returns 503 twice before succeeding, then cycles.
-
-```bash
-./trenchcoat serve --coats /tmp/trenchcoat-demo/mocks/sequence.yaml --port 19878 &
-sleep 0.5
-echo "Request 1: $(curl -s -w "%{http_code}" http://127.0.0.1:19878/health)"
-echo "Request 2: $(curl -s -w "%{http_code}" http://127.0.0.1:19878/health)"
-echo "Request 3: $(curl -s -w "%{http_code}" http://127.0.0.1:19878/health)"
-echo "Request 4: $(curl -s -w "%{http_code}" http://127.0.0.1:19878/health)"
-kill %1 2>/dev/null; wait 2>/dev/null
-```
-
-```output
-time=2026-02-26T11:56:36.397Z level=INFO msg="coats loaded" count=1
-time=2026-02-26T11:56:36.398Z level=INFO msg="server started" address=0.0.0.0:19878
-Request 1: Service Unavailable503
-Request 2: Service Unavailable503
-Request 3: {"status": "ok"}200
-Request 4: Service Unavailable503
-time=2026-02-26T11:56:37.057Z level=INFO msg="received signal, shutting down" signal=terminated
-time=2026-02-26T11:56:37.057Z level=INFO msg="server stopped"
-```
-
-## Header Matching
-
-Coats can require specific headers (with glob support). This coat only matches when an Authorization header with a Bearer token is present.
-
-```bash
-./trenchcoat serve --coats /tmp/trenchcoat-demo/mocks/headers.yaml --port 19879 &
-sleep 0.5
-echo "With Authorization header:"
-curl -s -H "Authorization: Bearer my-token" http://127.0.0.1:19879/api/protected
-echo ""
-echo "Without Authorization header:"
-curl -s http://127.0.0.1:19879/api/protected
-echo ""
-kill %1 2>/dev/null; wait 2>/dev/null
-```
-
-```output
-time=2026-02-26T11:57:00.224Z level=INFO msg="coats loaded" count=1
-time=2026-02-26T11:57:00.225Z level=INFO msg="server started" address=0.0.0.0:19879
-With Authorization header:
-{"message": "welcome, authorised user"}
-Without Authorization header:
-{"error":"no matching coat","method":"GET","uri":"/api/protected"}
-
-time=2026-02-26T11:57:00.807Z level=INFO msg="received signal, shutting down" signal=terminated
-time=2026-02-26T11:57:00.807Z level=INFO msg="server stopped"
-```
-
-## Proxy Capture Mode
-
-Proxy mode forwards requests to an upstream server while capturing request/response pairs as coat files. Here we use trenchcoat serve as the upstream and proxy through to it.
-
-```bash
-rm -rf /tmp/trenchcoat-demo/captured
-
-# Start upstream mock
-./trenchcoat serve --coats /tmp/trenchcoat-demo/mocks/users.yaml --port 19882 &
-sleep 0.3
-
-# Start proxy
-./trenchcoat proxy http://127.0.0.1:19882 --port 19883 --write-dir /tmp/trenchcoat-demo/captured &
-sleep 0.3
-
-# Make a request through the proxy
-echo "Response through proxy:"
-curl -s http://127.0.0.1:19883/api/v1/users
-echo ""
-sleep 0.3
-
-# Show the captured coat file
-echo "Captured coat file:"
-cat /tmp/trenchcoat-demo/captured/*.yaml
-
-kill %2 %1 2>/dev/null
+kill %1 2>/dev/null
 wait 2>/dev/null
 ```
 
 ```output
-time=2026-02-26T12:00:22.269Z level=INFO msg="coats loaded" count=2
-time=2026-02-26T12:00:22.270Z level=INFO msg="server started" address=0.0.0.0:19882
-time=2026-02-26T12:00:22.581Z level=INFO msg="proxy started" address=0.0.0.0:19883 upstream=http://127.0.0.1:19882 write_dir=/tmp/trenchcoat-demo/captured filter="" dedupe=overwrite
-Response through proxy:
-{"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}
+time=2026-03-07T11:53:19.479Z level=INFO msg="coats loaded" count=2
+time=2026-03-07T11:53:19.480Z level=INFO msg="server started" address=0.0.0.0:9100
+=== GET /api/v1/users ===
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "Alice"
+    },
+    {
+      "id": 2,
+      "name": "Bob"
+    }
+  ]
+}
 
-Captured coat file:
+=== POST /api/v1/users ===
+{
+  "id": 3,
+  "name": "Charlie"
+}
+
+=== GET /unknown (no matching coat) ===
+{
+  "error": "no matching coat",
+  "method": "GET",
+  "uri": "/unknown"
+}
+time=2026-03-07T11:53:20.586Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-03-07T11:53:20.586Z level=INFO msg="server stopped"
+```
+
+## Glob and Regex URI Matching
+
+Trenchcoat supports three URI matching modes: exact, glob (with `*`, `?`, `**`), and regex (prefixed with `~/`).
+
+```bash
+cat patterns.yaml
+```
+
+```output
+coats:
+  - name: single-user-glob
+    request:
+      uri: /api/v1/users/*
+    response:
+      code: 200
+      body: '{"match": "glob-single-segment"}'
+
+  - name: nested-glob
+    request:
+      uri: /api/**/comments
+    response:
+      code: 200
+      body: '{"match": "glob-multi-segment"}'
+
+  - name: regex-numeric-id
+    request:
+      uri: ~/api/v1/items/\d+
+    response:
+      code: 200
+      body: '{"match": "regex-numeric"}'
+```
+
+```bash
+trenchcoat serve --coats patterns.yaml --port 9101 &
+sleep 1
+
+echo "=== Glob: /api/v1/users/42 ==="
+curl -s http://localhost:9101/api/v1/users/42 | jq .
+
+echo ""
+echo "=== Double-star glob: /api/v1/posts/99/comments ==="
+curl -s http://localhost:9101/api/v1/posts/99/comments | jq .
+
+echo ""
+echo "=== Regex: /api/v1/items/123 ==="
+curl -s http://localhost:9101/api/v1/items/123 | jq .
+
+echo ""
+echo "=== Regex miss: /api/v1/items/abc (not numeric) ==="
+curl -s http://localhost:9101/api/v1/items/abc | jq .
+
+kill %1 2>/dev/null
+wait 2>/dev/null
+```
+
+```output
+time=2026-03-07T11:53:39.168Z level=INFO msg="coats loaded" count=3
+time=2026-03-07T11:53:39.169Z level=INFO msg="server started" address=0.0.0.0:9101
+=== Glob: /api/v1/users/42 ===
+{
+  "match": "glob-single-segment"
+}
+
+=== Double-star glob: /api/v1/posts/99/comments ===
+{
+  "match": "glob-multi-segment"
+}
+
+=== Regex: /api/v1/items/123 ===
+{
+  "match": "regex-numeric"
+}
+
+=== Regex miss: /api/v1/items/abc (not numeric) ===
+{
+  "error": "no matching coat",
+  "method": "GET",
+  "uri": "/api/v1/items/abc"
+}
+time=2026-03-07T11:53:40.298Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-03-07T11:53:40.298Z level=INFO msg="server stopped"
+```
+
+## Response Sequences
+
+A coat can define multiple responses that cycle through on successive requests. This is useful for simulating retries, eventual consistency, or error recovery.
+
+```bash
+cat sequences.yaml
+```
+
+```output
+coats:
+  - name: retry-endpoint
+    request:
+      uri: /api/v1/health
+    responses:
+      - code: 503
+        body: '{"status": "unavailable"}'
+      - code: 503
+        body: '{"status": "unavailable"}'
+      - code: 200
+        body: '{"status": "healthy"}'
+    sequence: cycle
+```
+
+```bash
+trenchcoat serve --coats sequences.yaml --port 9102 &
+sleep 1
+
+echo "=== Request 1 (expect 503) ==="
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:9102/api/v1/health
+
+echo ""
+echo "=== Request 2 (expect 503) ==="
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:9102/api/v1/health
+
+echo ""
+echo "=== Request 3 (expect 200) ==="
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:9102/api/v1/health
+
+echo ""
+echo "=== Request 4 (cycles back to 503) ==="
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:9102/api/v1/health
+
+kill %1 2>/dev/null
+wait 2>/dev/null
+```
+
+```output
+time=2026-03-07T11:53:57.795Z level=INFO msg="coats loaded" count=1
+time=2026-03-07T11:53:57.796Z level=INFO msg="server started" address=0.0.0.0:9102
+=== Request 1 (expect 503) ===
+{"status": "unavailable"}
+HTTP 503
+
+=== Request 2 (expect 503) ===
+{"status": "unavailable"}
+HTTP 503
+
+=== Request 3 (expect 200) ===
+{"status": "healthy"}
+HTTP 200
+
+=== Request 4 (cycles back to 503) ===
+{"status": "unavailable"}
+HTTP 503
+time=2026-03-07T11:53:59.082Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-03-07T11:53:59.083Z level=INFO msg="server stopped"
+```
+
+## Header Matching
+
+Coats can require specific headers, with glob pattern support for values.
+
+```bash
+cat headers.yaml
+```
+
+```output
+coats:
+  - name: authorized
+    request:
+      uri: /api/v1/secret
+      headers:
+        Authorization: "Bearer *"
+    response:
+      code: 200
+      body: '{"secret": "treasure"}'
+
+  - name: unauthorized
+    request:
+      uri: /api/v1/secret
+    response:
+      code: 401
+      body: '{"error": "missing auth"}'
+```
+
+```bash
+trenchcoat serve --coats headers.yaml --port 9103 &
+sleep 1
+
+echo "=== With Authorization header ==="
+curl -s -H "Authorization: Bearer my-token" http://localhost:9103/api/v1/secret | jq .
+
+echo ""
+echo "=== Without Authorization header ==="
+curl -s http://localhost:9103/api/v1/secret | jq .
+
+kill %1 2>/dev/null
+wait 2>/dev/null
+```
+
+```output
+time=2026-03-07T11:54:14.389Z level=INFO msg="coats loaded" count=2
+time=2026-03-07T11:54:14.390Z level=INFO msg="server started" address=0.0.0.0:9103
+=== With Authorization header ===
+{
+  "secret": "treasure"
+}
+
+=== Without Authorization header ===
+{
+  "error": "missing auth"
+}
+time=2026-03-07T11:54:15.454Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-03-07T11:54:15.455Z level=INFO msg="server stopped"
+```
+
+## Validation Errors
+
+The `validate` command catches schema errors before you start the server.
+
+```bash
+cat invalid.yaml
+```
+
+```output
+coats:
+  - name: broken
+    request:
+      uri: ""
+    response:
+      code: 200
+      body: inline
+      body_file: also-a-file.json
+  - name: also-broken
+    request:
+      uri: /test
+    response:
+      code: 200
+    responses:
+      - code: 200
+```
+
+```bash
+trenchcoat validate invalid.yaml || true
+```
+
+```output
+error: invalid.yaml: broken: request.uri is required
+error: invalid.yaml: broken: response: 'body' and 'body_file' are mutually exclusive
+error: invalid.yaml: also-broken: coat must have either 'response' or 'responses', not both
+error: validation failed with 3 error(s)
+```
+
+## Proxy Capture
+
+Trenchcoat can act as a proxy, capturing real request/response pairs as coat files. Here we proxy to our own mock server to demonstrate the flow.
+
+```bash
+mkdir -p captured
+trenchcoat serve --coats basic.yaml --port 9106 &
+sleep 1
+trenchcoat proxy http://localhost:9106 --port 9107 --write-dir captured --pretty-json &
+sleep 1
+curl -s http://localhost:9107/api/v1/users > /dev/null
+curl -s -X POST http://localhost:9107/api/v1/users > /dev/null
+sleep 1
+echo "=== Captured coat files ==="
+ls captured/
+echo ""
+echo "=== Contents of captured GET coat ==="
+cat captured/GET_api_v1_users_200.yaml
+kill %2 %1 2>/dev/null; wait 2>/dev/null
+```
+
+```output
+time=2026-03-07T11:56:48.506Z level=INFO msg="coats loaded" count=2
+time=2026-03-07T11:56:48.507Z level=INFO msg="server started" address=0.0.0.0:9106
+time=2026-03-07T11:56:49.517Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
+=== Captured coat files ===
+GET_api_v1_users_200.yaml
+POST_api_v1_users_201.yaml
+
+=== Contents of captured GET coat ===
 coats:
     - name: GET /api/v1/users
       request:
@@ -348,13 +486,24 @@ coats:
       response:
         code: 200
         headers:
-            Content-Length: "66"
+            Content-Length: "65"
             Content-Type: application/json
-            Date: Thu, 26 Feb 2026 12:00:22 GMT
-        body: |
-            {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}
-time=2026-02-26T12:00:23.228Z level=INFO msg="received signal, shutting down" signal=terminated
-time=2026-02-26T12:00:23.228Z level=INFO msg="received signal, shutting down" signal=terminated
-time=2026-02-26T12:00:23.229Z level=INFO msg="proxy stopped"
-time=2026-02-26T12:00:23.229Z level=INFO msg="server stopped"
+            Date: Sat, 07 Mar 2026 11:56:50 GMT
+        body: |-
+            {
+              "users": [
+                {
+                  "id": 1,
+                  "name": "Alice"
+                },
+                {
+                  "id": 2,
+                  "name": "Bob"
+                }
+              ]
+            }
+time=2026-03-07T11:56:51.615Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-03-07T11:56:51.615Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-03-07T11:56:51.615Z level=INFO msg="proxy stopped"
+time=2026-03-07T11:56:51.615Z level=INFO msg="server stopped"
 ```
