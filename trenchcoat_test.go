@@ -343,6 +343,35 @@ func TestRequests_CapturesDetails(t *testing.T) {
 	}
 }
 
+func TestCapturedRequestQuerySeparation(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "query-test",
+			Request:  Request{Method: "GET", URI: "/search"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+	)
+	srv.Start(t)
+
+	resp, err := httpClient.Get(srv.URL + "/search?q=hello&page=2")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	reqs := srv.Requests("query-test")
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 captured request, got %d", len(reqs))
+	}
+	cr := reqs[0]
+	if cr.URI != "/search" {
+		t.Errorf("expected URI /search (path only), got %q", cr.URI)
+	}
+	if cr.RawQuery != "q=hello&page=2" {
+		t.Errorf("expected RawQuery 'q=hello&page=2', got %q", cr.RawQuery)
+	}
+}
+
 func TestResetCalls(t *testing.T) {
 	srv := NewServer(
 		WithCoat(Coat{

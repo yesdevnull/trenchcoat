@@ -47,10 +47,11 @@ import (
 
 // CapturedRequest records details of an incoming request that matched a coat.
 type CapturedRequest struct {
-	Method string
-	URI    string
-	Header http.Header
-	Body   string
+	Method   string
+	URI      string
+	RawQuery string
+	Header   http.Header
+	Body     string
 }
 
 // Coat is an individual request/response mock definition.
@@ -322,10 +323,11 @@ func (s *Server) Requests(name string) []CapturedRequest {
 	out := make([]CapturedRequest, len(internal))
 	for i, cr := range internal {
 		out[i] = CapturedRequest{
-			Method: cr.Method,
-			URI:    cr.URI,
-			Header: cr.Header.Clone(),
-			Body:   cr.Body,
+			Method:   cr.Method,
+			URI:      cr.URI,
+			RawQuery: cr.RawQuery,
+			Header:   cr.Header.Clone(),
+			Body:     cr.Body,
 		}
 	}
 	return out

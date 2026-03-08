@@ -25,10 +25,11 @@ import (
 
 // CapturedRequest records details of an incoming request that matched a coat.
 type CapturedRequest struct {
-	Method string
-	URI    string
-	Header http.Header
-	Body   string
+	Method   string
+	URI      string
+	RawQuery string
+	Header   http.Header
+	Body     string
 }
 
 // Server is the Trenchcoat mock HTTP server.
@@ -371,9 +372,10 @@ const maxRecordBodySize = 1 << 20 // 1 MiB
 // recordCall captures request details for the matched coat.
 func (s *Server) recordCall(name string, r *http.Request) {
 	cr := CapturedRequest{
-		Method: r.Method,
-		URI:    r.URL.RequestURI(),
-		Header: r.Header.Clone(),
+		Method:   r.Method,
+		URI:      r.URL.Path,
+		RawQuery: r.URL.RawQuery,
+		Header:   r.Header.Clone(),
 	}
 
 	// Read body for recording with a size limit to prevent DoS.
