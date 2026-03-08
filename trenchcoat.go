@@ -78,7 +78,8 @@ type Server struct {
 	URL string
 
 	// TLSClient is an *http.Client configured to trust the server's TLS
-	// certificate. Only set when WithSelfSignedTLS or WithTLS is used.
+	// certificate. It is only guaranteed to be set when WithSelfSignedTLS is
+	// used and may be nil in other configurations (including WithTLS).
 	TLSClient *http.Client
 
 	coats       []coat.LoadedCoat
@@ -209,11 +210,19 @@ func generateSelfSignedCert(t testing.TB) (certFile, keyFile string, pool *x509.
 		t.Fatalf("trenchcoat: failed to generate TLS key: %v", err)
 	}
 
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		t.Fatalf("trenchcoat: failed to generate serial number: %v", err)
+	}
+
+	now := time.Now()
+
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serialNumber,
 		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotBefore:    now.Add(-1 * time.Minute),
+		NotAfter:     now.Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     []string{"localhost"},
@@ -267,6 +276,7 @@ func (s *Server) Stop() {
 // AssertCalled fails the test if the named coat was never called.
 func (s *Server) AssertCalled(t testing.TB, name string) {
 	t.Helper()
+	s.requireStarted(t)
 	if s.inner.CallCount(name) == 0 {
 		t.Errorf("trenchcoat: expected coat %q to have been called, but it was not", name)
 	}
@@ -275,6 +285,7 @@ func (s *Server) AssertCalled(t testing.TB, name string) {
 // AssertCalledN fails the test if the named coat was not called exactly n times.
 func (s *Server) AssertCalledN(t testing.TB, name string, n int) {
 	t.Helper()
+	s.requireStarted(t)
 	got := s.inner.CallCount(name)
 	if got != n {
 		t.Errorf("trenchcoat: expected coat %q to have been called %d time(s), got %d", name, n, got)
@@ -284,6 +295,7 @@ func (s *Server) AssertCalledN(t testing.TB, name string, n int) {
 // AssertNotCalled fails the test if the named coat was called.
 func (s *Server) AssertNotCalled(t testing.TB, name string) {
 	t.Helper()
+	s.requireStarted(t)
 	if got := s.inner.CallCount(name); got > 0 {
 		t.Errorf("trenchcoat: expected coat %q not to have been called, but it was called %d time(s)", name, got)
 	}
@@ -291,6 +303,9 @@ func (s *Server) AssertNotCalled(t testing.TB, name string) {
 
 // Requests returns all captured requests for the named coat.
 func (s *Server) Requests(name string) []CapturedRequest {
+	if s.inner == nil {
+		return nil
+	}
 	internal := s.inner.Calls(name)
 	out := make([]CapturedRequest, len(internal))
 	for i, cr := range internal {
@@ -306,5 +321,16 @@ func (s *Server) Requests(name string) []CapturedRequest {
 
 // ResetCalls clears all recorded call data.
 func (s *Server) ResetCalls() {
+	if s.inner == nil {
+		return
+	}
 	s.inner.ResetCalls()
+}
+
+// requireStarted fails the test if the server has not been started.
+func (s *Server) requireStarted(t testing.TB) {
+	t.Helper()
+	if s.inner == nil {
+		t.Fatalf("trenchcoat: server has not been started; call Start(t) before using assertions")
+	}
 }

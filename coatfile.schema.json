@@ -99,8 +99,14 @@
           ]
         },
         "body": {
-          "description": "Request body to match (exact string comparison). When omitted, any body matches.",
+          "description": "Request body to match. When omitted, any body matches.",
           "type": "string"
+        },
+        "body_match": {
+          "description": "Body matching mode: exact (default), glob, contains, or regex.",
+          "type": "string",
+          "enum": ["exact", "glob", "contains", "regex"],
+          "default": "exact"
         }
       }
     },
@@ -133,6 +139,12 @@
         },
         "delay_ms": {
           "description": "Delay in milliseconds before sending the response.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "delay_jitter_ms": {
+          "description": "Random jitter in milliseconds added on top of delay_ms. The actual additional delay is a random value between 0 and this value.",
           "type": "integer",
           "minimum": 0,
           "default": 0
