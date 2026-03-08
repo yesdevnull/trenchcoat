@@ -475,13 +475,22 @@ func renderTemplate(body string, r *http.Request) string {
 	// prevent excessive memory usage from large request bodies.
 	var reqBody string
 	if r.Body != nil {
-		limited := io.LimitReader(r.Body, maxRecordBodySize)
+		origBody := r.Body
+		limited := io.LimitReader(origBody, maxRecordBodySize)
 		bodyBytes, readErr := io.ReadAll(limited)
-		_ = r.Body.Close()
 		if readErr == nil {
 			reqBody = string(bodyBytes)
 		}
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		// Reconstruct r.Body so that downstream handlers can still read
+		// the entire request body: first the bytes we've captured, then
+		// the remaining unread bytes from the original body.
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: io.MultiReader(bytes.NewReader(bodyBytes), origBody),
+			Closer: origBody,
+		}
 	}
 
 	data := templateData{
