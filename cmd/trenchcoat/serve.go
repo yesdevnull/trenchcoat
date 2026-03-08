@@ -55,8 +55,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load coats.
-	loaded, loadErrs := coat.LoadPaths(coatPaths)
-	for _, e := range loadErrs {
+	loadResult := coat.LoadPathsWithWarnings(coatPaths)
+	loaded := loadResult.Coats
+	for _, w := range loadResult.Warnings {
+		logger.Warn("coat validation warning", "warning", w)
+	}
+	for _, e := range loadResult.Errors {
 		logger.Warn("coat loading error", "error", e)
 	}
 	logger.Info("coats loaded", "count", len(loaded))
@@ -139,11 +143,14 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) {
 				if coat.IsCoatFile(event.Name) {
 					logger.Info("coat file changed, reloading", "file", event.Name)
-					loaded, loadErrs := coat.LoadPaths(coatPaths)
-					for _, e := range loadErrs {
+					reloadResult := coat.LoadPathsWithWarnings(coatPaths)
+					for _, w := range reloadResult.Warnings {
+						logger.Warn("coat validation warning", "warning", w)
+					}
+					for _, e := range reloadResult.Errors {
 						logger.Warn("reload error", "error", e)
 					}
-					srv.Reload(loaded)
+					srv.Reload(reloadResult.Coats)
 				}
 			}
 		case err, ok := <-watcher.Errors:

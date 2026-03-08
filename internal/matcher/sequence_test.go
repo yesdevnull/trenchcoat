@@ -138,7 +138,7 @@ func TestNew_InvalidRegexSkipped(t *testing.T) {
 	// Should not panic.
 	m := matcher.New(coats)
 
-	// Bad regex coat should be skipped.
+	// Bad regex coat is kept but never matches (nil regex).
 	r := m.Match(newRequest(t, "GET", "/api/test", nil))
 	if r != nil {
 		t.Fatal("expected no match for bad regex coat")

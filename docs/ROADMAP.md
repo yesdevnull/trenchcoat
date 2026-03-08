@@ -7,164 +7,7 @@ Complexity: Low (~1-2 days), Medium (~3-5 days), High (~1-2 weeks).
 
 ---
 
-### Tier 1 — High Benefit, Low Complexity
-
-#### 1. Request Body Glob/Substring Matching
-
-**Benefit:** High | **Complexity:** Low
-
-Body matching is already implemented as exact string match. Extending it to
-support glob patterns (like headers already do) and substring/contains matching
-would make it dramatically more useful for real-world API testing where request
-bodies contain timestamps, UUIDs, or other dynamic fields.
-
-Proposed syntax in coat files:
-
-```yaml
-request:
-  body_match: glob       # or: exact (default), contains, regex
-  body: '{"name": "*", "email": "*@example.com"}'
-```
-
-The matcher infrastructure already handles glob via `path.Match` for headers
-and URIs — this reuses existing patterns. The `body_match` field would default
-to `exact` for backwards compatibility.
-
-#### 2. Request Assertions / Call Counting (Programmatic API)
-
-**Benefit:** High | **Complexity:** Low
-
-The test API (`trenchcoat.NewServer`) currently has no way to verify that
-expected requests were actually made. This is the single biggest gap for test
-usage. Add:
-
-```go
-srv.AssertCalled(t, "get-users")           // coat was called at least once
-srv.AssertCalledN(t, "get-users", 3)       // called exactly N times
-srv.AssertNotCalled(t, "delete-users")     // never called
-srv.Requests("get-users") []http.Request   // return captured requests
-```
-
-Implementation: add a `sync.Map` of coat-name → `[]capturedRequest` in the
-server, populated in `handleRequest`. Minimal changes, high test utility.
-
-#### 3. Coat-Level Variable Substitution
-
-**Benefit:** High | **Complexity:** Low
-
-Coat files often contain environment-specific values — base URLs, hostnames,
-port numbers — that differ between dev and production. Currently you need
-separate coat files or manual editing. Variable substitution lets a single coat
-file work across environments.
-
-Variables use `${VAR_NAME}` syntax with an optional default value separated by
-`:-`, inspired by Flux's variable substitution for Kubernetes manifests:
-
-```yaml
-coats:
-  - name: get-users
-    request:
-      uri: "${API_PREFIX:-/api/v1}/users"
-    response:
-      code: 200
-      headers:
-        Location: "${BASE_URL:-http://localhost:8080}/api/v1/users"
-      body: '{"endpoint": "${BASE_URL:-http://localhost:8080}/api/v1/users"}'
-```
-
-Variables are resolved from environment variables at coat load time. If a
-variable is unset and has no default, it is left as-is (or optionally raises a
-validation warning). This is pure string substitution — no template engine
-needed, just a single `regexp.ReplaceAllStringFunc` pass over the raw file
-content before YAML/JSON parsing.
-
-This pairs well with the proxy capture workflow: capture coats against a real
-upstream, then replace the hardcoded host with `${BASE_URL}` so the same coats
-work against any environment.
-
-#### 4. Response Templating (Request-Aware Interpolation)
-
-**Benefit:** High | **Complexity:** Low-Medium
-
-Allow response bodies to reference parts of the matched request using simple
-template variables. This avoids needing separate coats for every variation:
-
-```yaml
-response:
-  body: '{"id": "{{.Request.URI.Segment 3}}", "method": "{{.Request.Method}}"}'
-```
-
-Or simpler built-in variables:
-
-```yaml
-response:
-  body: '{"echo": "{{.Request.Body}}", "path": "{{.Request.Path}}"}'
-```
-
-Start with a minimal set (path, method, query params, path segments, request
-body) using Go's `text/template`. Keep it optional — plain strings work exactly
-as before.
-
-Note: this is distinct from coat-level variable substitution (item 3).
-Variables (item 3) are resolved once at load time from the environment and
-affect all fields. Response templating is evaluated per-request and only applies
-to response bodies, interpolating values from the incoming request.
-
-#### 5. Public API TLS Support
-
-**Benefit:** Medium | **Complexity:** Low
-
-The internal server supports TLS but the public test API does not expose it.
-Add:
-
-```go
-trenchcoat.WithSelfSignedTLS()  // auto-generate ephemeral cert
-trenchcoat.WithTLS(cert, key)   // explicit cert/key files
-```
-
-`WithSelfSignedTLS` is the high-value option — generates a self-signed cert at
-test startup and returns an `*http.Client` with the right CA pool. Noted in
-`test-coverage-analysis.md` as a gap.
-
----
-
 ### Tier 2 — Medium Benefit, Low-Medium Complexity
-
-#### 6. Latency Simulation Profiles
-
-**Benefit:** Medium | **Complexity:** Low
-
-`delay_ms` exists but is a fixed value. Add jitter and distribution options for
-more realistic testing:
-
-```yaml
-response:
-  delay_ms: 100
-  delay_jitter_ms: 50    # random ±50ms around 100ms
-```
-
-Or at the server level:
-
-```
-trenchcoat serve --latency-profile slow  # adds 200-500ms to all responses
-```
-
-Useful for testing timeout handling and retry logic.
-
-#### 7. Proxy-to-Coat Workflow Improvements
-
-**Benefit:** Medium | **Complexity:** Low
-
-Small quality-of-life improvements to the proxy capture mode:
-
-- **`--name-template`** — customise captured coat file naming (e.g.
-  `{{.Method}}_{{.Path}}_{{.Status}}` instead of the fixed format)
-- **`--body-file-threshold`** — automatically write response bodies larger than
-  N bytes to separate files using `body_file` instead of inline `body`
-- **`--pretty-json`** — pretty-print captured JSON response bodies for
-  readability
-
-These are small, independent changes that improve the proxy-to-mock workflow.
 
 #### 8. Conditional Responses (Request-Aware Sequences)
 
@@ -261,39 +104,44 @@ paths.
 
 ---
 
-### Improvement Ideas for Existing Features
+## Implemented
 
-#### A. Better 404 Diagnostics
+The following features have been implemented and are available:
 
-When no coat matches, the current 404 response only includes method and URI.
-Adding a `--verbose` or `--debug` mode that explains *why* each coat didn't
-match (e.g. "URI matched but header `Authorization` missing") would
-significantly speed up debugging. Could also include a ranked list of
-"near-miss" coats.
+### Tier 1 — High Benefit, Low Complexity
 
-#### B. Coat Validation Warnings (Non-Fatal)
+- **Request Body Glob/Substring Matching (#1)** — `body_match` field supports
+  `exact` (default), `glob`, `contains`, and `regex` modes.
+- **Request Assertions / Call Counting (#2)** — `AssertCalled`,
+  `AssertCalledN`, `AssertNotCalled`, `Requests`, and `ResetCalls` on the
+  programmatic API.
+- **Coat-Level Variable Substitution (#3)** — `${VAR}` and `${VAR:-default}`
+  syntax resolved from environment variables at parse time.
+- **Response Templating (#4)** — Response bodies containing `{{` are rendered
+  as Go `text/template` with request context (`.Method`, `.Path`, `.Body`,
+  `.Query "key"`, `.Segment N`).
+- **Public API TLS Support (#5)** — `WithSelfSignedTLS()` and `WithTLS(cert,
+  key)` options with auto-generated certificates and pre-configured
+  `TLSClient`.
 
-The `validate` command currently only reports errors. Add warnings for:
-- Duplicate coat names (not an error, but likely a mistake)
-- Coats that can never match (e.g. shadowed by a more specific coat)
-- Unused `body_file` references that don't exist on disk
-- Regex patterns that are equivalent to simpler glob patterns
+### Tier 2 — Medium Benefit, Low-Medium Complexity
 
-#### C. Request Logging Improvements
+- **Latency Jitter (#6)** — `delay_jitter_ms` field adds random delay (0 to
+  jitter value) on top of `delay_ms`.
+- **Proxy-to-Coat Workflow Improvements (#7)** — `--pretty-json` for formatted
+  JSON capture, `--body-file-threshold` for large body extraction to separate
+  files, `--name-template` for custom captured coat file naming.
 
-The verbose logging is functional but could be richer:
-- Log the matched coat's file path and line number
-- Log which qualifiers were decisive in matching
-- Optional request/response body logging (truncated) for debugging
-- Structured log fields for the request body hash (for body-matched coats)
+### Improvement Ideas
 
-#### D. Glob Pattern Enhancement
-
-The current glob matching uses `path.Match` which only supports `*` (single
-path segment) and `?`. It does not support `**` (multi-segment). For URIs like
-`/api/v1/users/123/posts/456`, you'd need `/api/v1/users/*/posts/*` — but
-`/api/**/posts/*` would be more natural. Consider using `doublestar` or a
-custom implementation for `**` support.
+- **Better 404 Diagnostics (A)** — Verbose mode includes ranked near-miss
+  diagnostics explaining why each coat didn't match.
+- **Coat Validation Warnings (B)** — Non-fatal warnings for duplicate coat
+  names and regex patterns expressible as simpler globs.
+- **Request Logging Improvements (C)** — Verbose logs include matched coat
+  file path, decisive qualifiers (headers/query/body), and structured fields.
+- **Glob Pattern Enhancement (D)** — URI glob matching supports `**` for
+  multi-segment matching via the `doublestar` library.
 
 ---
 
@@ -311,5 +159,5 @@ addresses the shared config need without the complexity.
 
 Implemented as exact string matching via the `request.body` field (`*string` —
 `nil` means match any body, set value means exact match). Proxy capture
-includes `--capture-body` flag (default: `true`). See item 1 for proposed
-enhancements (glob, substring, regex body matching).
+includes `--capture-body` flag (default: `true`). Enhanced with `body_match`
+modes (glob, contains, regex) in item 1.

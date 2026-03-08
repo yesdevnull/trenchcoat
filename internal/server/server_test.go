@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,6 +196,53 @@ func TestServe_DelayMs(t *testing.T) {
 	if elapsed < 90*time.Millisecond {
 		t.Fatalf("expected at least 90ms delay, got %v", elapsed)
 	}
+	assertEqual(t, "status", 200, resp.StatusCode)
+}
+
+func TestServe_DelayJitter(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "jittery",
+				Request:  coat.Request{Method: "GET", URI: "/jitter"},
+				Response: &coat.Response{Code: 200, Body: "ok", DelayMs: 50, DelayJitterMs: 50},
+			},
+		},
+	})
+
+	// Make several requests — all should take at least 50ms (the base delay).
+	for range 3 {
+		start := time.Now()
+		resp, err := httpClient.Get(srv.URL() + "/jitter")
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_ = resp.Body.Close()
+		assertEqual(t, "status", 200, resp.StatusCode)
+		if elapsed < 50*time.Millisecond {
+			t.Fatalf("expected at least 50ms delay, got %v", elapsed)
+		}
+	}
+}
+
+func TestServe_DelayJitter_OnlyJitter(t *testing.T) {
+	// Jitter without base delay should still work.
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "jitter-only",
+				Request:  coat.Request{Method: "GET", URI: "/jitter-only"},
+				Response: &coat.Response{Code: 200, Body: "ok", DelayJitterMs: 10},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/jitter-only")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
 	assertEqual(t, "status", 200, resp.StatusCode)
 }
 
@@ -587,6 +635,128 @@ func TestServe_BodyFile_SameCoatFilePath_NoAmbiguity(t *testing.T) {
 	assertEqual(t, "body", `{"ok": true}`, readBody(t, resp))
 }
 
+// --- Response templating ---
+
+func TestServe_ResponseTemplate_Method(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-method",
+				Request:  coat.Request{Method: "ANY", URI: "/echo"},
+				Response: &coat.Response{Code: 200, Body: `{"method": "{{.Method}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Post(srv.URL()+"/echo", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"method": "POST"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_Path(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-path",
+				Request:  coat.Request{Method: "GET", URI: "/api/v1/users/*"},
+				Response: &coat.Response{Code: 200, Body: `{"path": "{{.Path}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users/123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"path": "/api/v1/users/123"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_PathSegment(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-segment",
+				Request:  coat.Request{Method: "GET", URI: "/api/v1/users/*"},
+				Response: &coat.Response{Code: 200, Body: `{"id": "{{.Segment 3}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/api/v1/users/456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"id": "456"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_QueryParam(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-query",
+				Request:  coat.Request{Method: "GET", URI: "/search"},
+				Response: &coat.Response{Code: 200, Body: `{"q": "{{.Query "q"}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/search?q=hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"q": "hello"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_Body(t *testing.T) {
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "echo-body",
+				Request:  coat.Request{Method: "POST", URI: "/echo"},
+				Response: &coat.Response{Code: 200, Body: `{"echoed": "{{.Body}}"}`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Post(srv.URL()+"/echo", "text/plain", strings.NewReader("ping"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "status", 200, resp.StatusCode)
+	assertEqual(t, "body", `{"echoed": "ping"}`, readBody(t, resp))
+}
+
+func TestServe_ResponseTemplate_NoTemplate(t *testing.T) {
+	// Bodies without {{ should be returned as-is.
+	srv := startServer(t, []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "plain",
+				Request:  coat.Request{Method: "GET", URI: "/plain"},
+				Response: &coat.Response{Code: 200, Body: `no templates here`},
+			},
+		},
+	})
+
+	resp, err := httpClient.Get(srv.URL() + "/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assertEqual(t, "body", "no templates here", readBody(t, resp))
+}
+
 // --- Helpers ---
 
 func startServer(t *testing.T, coats []coat.LoadedCoat) *server.Server {
@@ -615,5 +785,45 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 	t.Helper()
 	if expected != actual {
 		t.Errorf("%s: expected %v, got %v", field, expected, actual)
+	}
+}
+
+func TestCalls_ReturnsClonedHeaders(t *testing.T) {
+	coats := []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "clone-test",
+				Request:  coat.Request{Method: "GET", URI: "/clone"},
+				Response: &coat.Response{Code: 200, Body: "ok"},
+			},
+		},
+	}
+
+	srv := server.New(coats, server.Config{RecordCalls: true})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	req, _ := http.NewRequest("GET", srv.URL()+"/clone", nil)
+	req.Header.Set("X-Test", "original")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// Get captured requests and mutate the returned header.
+	calls := srv.Calls("clone-test")
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	calls[0].Header.Set("X-Test", "mutated")
+
+	// Fetch again — the internal storage should be unaffected.
+	calls2 := srv.Calls("clone-test")
+	if calls2[0].Header.Get("X-Test") != "original" {
+		t.Errorf("expected internal header to remain 'original', got %q", calls2[0].Header.Get("X-Test"))
 	}
 }

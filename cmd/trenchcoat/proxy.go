@@ -25,6 +25,9 @@ func newProxyCmd() *cobra.Command {
 	cmd.Flags().Bool("no-headers", false, "Omit all headers from captured coat files (mutually exclusive with --strip-headers)")
 	cmd.Flags().String("dedupe", "overwrite", "Deduplication strategy: overwrite, skip, or append")
 	cmd.Flags().Bool("capture-body", true, "Capture request body in coat files for any request with a body")
+	cmd.Flags().Bool("pretty-json", false, "Pretty-print JSON response bodies in captured coat files")
+	cmd.Flags().Int("body-file-threshold", 0, "Write response bodies larger than N bytes to separate files (0 = always inline)")
+	cmd.Flags().String("name-template", "", "Custom template for captured coat file names (e.g. {{.Method}}-{{.Path}}-{{.Status}})")
 	cmd.Flags().Bool("verbose", false, "Log each proxied request and capture event")
 	cmd.Flags().String("log-format", "text", "Log output format: text or json")
 
@@ -49,6 +52,9 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		stripHeaders = nil
 	}
 	captureBody, _ := cmd.Flags().GetBool("capture-body")
+	prettyJSON, _ := cmd.Flags().GetBool("pretty-json")
+	bodyFileThreshold, _ := cmd.Flags().GetInt("body-file-threshold")
+	nameTemplate, _ := cmd.Flags().GetString("name-template")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	logFormat, _ := cmd.Flags().GetString("log-format")
 
@@ -63,15 +69,18 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	}
 
 	p, err := proxy.New(proxy.Config{
-		UpstreamURL:  upstreamURL,
-		WriteDir:     writeDir,
-		Filter:       filter,
-		StripHeaders: stripHeaders,
-		NoHeaders:    noHeaders,
-		Dedupe:       dedupe,
-		CaptureBody:  &captureBody,
-		Verbose:      verbose,
-		Logger:       logger,
+		UpstreamURL:       upstreamURL,
+		WriteDir:          writeDir,
+		Filter:            filter,
+		StripHeaders:      stripHeaders,
+		NoHeaders:         noHeaders,
+		Dedupe:            dedupe,
+		CaptureBody:       &captureBody,
+		PrettyJSON:        prettyJSON,
+		BodyFileThreshold: bodyFileThreshold,
+		NameTemplate:      nameTemplate,
+		Verbose:           verbose,
+		Logger:            logger,
 	})
 	if err != nil {
 		return err

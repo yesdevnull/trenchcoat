@@ -18,20 +18,22 @@ type Coat struct {
 
 // Request defines the matching criteria for an incoming HTTP request.
 type Request struct {
-	Method  string      `yaml:"method,omitempty" json:"method,omitempty"`
-	URI     string      `yaml:"uri" json:"uri"`
-	Headers StringMap   `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Query   *QueryField `yaml:"query,omitempty" json:"query,omitempty"`
-	Body    *string     `yaml:"body,omitempty" json:"body,omitempty"`
+	Method    string      `yaml:"method,omitempty" json:"method,omitempty"`
+	URI       string      `yaml:"uri" json:"uri"`
+	Headers   StringMap   `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Query     *QueryField `yaml:"query,omitempty" json:"query,omitempty"`
+	Body      *string     `yaml:"body,omitempty" json:"body,omitempty"`
+	BodyMatch string      `yaml:"body_match,omitempty" json:"body_match,omitempty"`
 }
 
 // Response defines the mock response to return.
 type Response struct {
-	Code     int       `yaml:"code,omitempty" json:"code,omitempty"`
-	Headers  StringMap `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Body     string    `yaml:"body,omitempty" json:"body,omitempty"`
-	BodyFile string    `yaml:"body_file,omitempty" json:"body_file,omitempty"`
-	DelayMs  int       `yaml:"delay_ms,omitempty" json:"delay_ms,omitempty"`
+	Code          int       `yaml:"code,omitempty" json:"code,omitempty"`
+	Headers       StringMap `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Body          string    `yaml:"body,omitempty" json:"body,omitempty"`
+	BodyFile      string    `yaml:"body_file,omitempty" json:"body_file,omitempty"`
+	DelayMs       int       `yaml:"delay_ms,omitempty" json:"delay_ms,omitempty"`
+	DelayJitterMs int       `yaml:"delay_jitter_ms,omitempty" json:"delay_jitter_ms,omitempty"`
 }
 
 // StringMap is a map[string]string used for headers.

@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -965,5 +966,288 @@ func TestSanitisePath(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("sanitisePath(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+func TestProxy_PrettyJSON(t *testing.T) {
+	compactJSON := `{"users":[{"id":1,"name":"alice"},{"id":2,"name":"bob"}]}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(compactJSON))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		PrettyJSON:   true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/users")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	contentStr := string(content)
+
+	// Verify it's valid JSON when extracted.
+	var captured coat.File
+	if err := yaml.Unmarshal(content, &captured); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	body := captured.Coats[0].Response.Body
+	if !json.Valid([]byte(body)) {
+		t.Fatalf("expected valid JSON in response body, got: %s", body)
+	}
+
+	// Pretty JSON should match json.Indent output (i.e., include indentation/newlines).
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, []byte(compactJSON), "", "  "); err != nil {
+		t.Fatalf("failed to indent JSON: %v", err)
+	}
+	if body != pretty.String() {
+		t.Fatalf("expected pretty-printed JSON body:\n%s\n\ngot:\n%s\n\nfull coat file:\n%s", pretty.String(), body, contentStr)
+	}
+}
+
+func TestProxy_PrettyJSON_NonJSON(t *testing.T) {
+	// Non-JSON responses should not be affected by PrettyJSON.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("just plain text"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		PrettyJSON:   true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/plain")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	if !strings.Contains(string(content), "just plain text") {
+		t.Fatalf("expected plain text body, got:\n%s", content)
+	}
+}
+
+func TestProxy_BodyFileThreshold(t *testing.T) {
+	largeBody := strings.Repeat("x", 200)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(largeBody))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:       upstream.URL,
+		WriteDir:          writeDir,
+		StripHeaders:      []string{},
+		Dedupe:            "overwrite",
+		BodyFileThreshold: 100,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/large")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	coatFiles, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(coatFiles) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+
+	content, err := os.ReadFile(coatFiles[0])
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+
+	// The coat file should use body_file instead of inline body.
+	var captured coat.File
+	if err := yaml.Unmarshal(content, &captured); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if captured.Coats[0].Response.Body != "" {
+		t.Fatal("expected body to be empty when body_file threshold exceeded")
+	}
+	if captured.Coats[0].Response.BodyFile == "" {
+		t.Fatal("expected body_file to be set when threshold exceeded")
+	}
+
+	// Verify the body file exists and has the correct content.
+	bodyFilePath := filepath.Join(writeDir, captured.Coats[0].Response.BodyFile)
+	bodyContent, err := os.ReadFile(bodyFilePath)
+	if err != nil {
+		t.Fatalf("failed to read body file: %v", err)
+	}
+	if string(bodyContent) != largeBody {
+		t.Fatalf("body file content mismatch: got %d bytes, want %d", len(bodyContent), len(largeBody))
+	}
+}
+
+func TestProxy_BodyFileThreshold_SmallBody(t *testing.T) {
+	// Bodies under the threshold should remain inline.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("small"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:       upstream.URL,
+		WriteDir:          writeDir,
+		StripHeaders:      []string{},
+		Dedupe:            "overwrite",
+		BodyFileThreshold: 100,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/small")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	coatFiles, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(coatFiles) == 0 {
+		t.Fatal("expected captured coat file")
+	}
+
+	content, err := os.ReadFile(coatFiles[0])
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	var captured coat.File
+	if err := yaml.Unmarshal(content, &captured); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if captured.Coats[0].Response.Body != "small" {
+		t.Fatalf("expected inline body 'small', got %q", captured.Coats[0].Response.Body)
+	}
+	if captured.Coats[0].Response.BodyFile != "" {
+		t.Fatal("expected no body_file for small body")
+	}
+}
+
+func TestProxy_NameTemplate(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte("created"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		NameTemplate: "{{.Method}}-{{.Path}}-{{.Status}}",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	_, err = p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Post(p.URL()+"/api/v1/users", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	expectedFile := filepath.Join(writeDir, "POST-api_v1_users-201.yaml")
+	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
+		allFiles, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+		t.Fatalf("expected file POST-api_v1_users-201.yaml, found: %v", allFiles)
 	}
 }

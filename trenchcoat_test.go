@@ -238,6 +238,233 @@ func TestWithCoatFile_NonExistent(t *testing.T) {
 	}
 }
 
+// --- Request Assertions / Call Counting ---
+
+func TestAssertCalled(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "get-test",
+			Request:  Request{Method: "GET", URI: "/test"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+	)
+	srv.Start(t)
+
+	resp, err := httpClient.Get(srv.URL + "/test")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	srv.AssertCalled(t, "get-test")
+}
+
+func TestAssertCalledN(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "counted",
+			Request:  Request{Method: "GET", URI: "/counted"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+	)
+	srv.Start(t)
+
+	for range 3 {
+		resp, err := httpClient.Get(srv.URL + "/counted")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	srv.AssertCalledN(t, "counted", 3)
+}
+
+func TestAssertNotCalled(t *testing.T) {
+	srv := NewServer(
+		WithCoats(
+			Coat{
+				Name:     "used",
+				Request:  Request{Method: "GET", URI: "/used"},
+				Response: &Response{Code: 200, Body: "ok"},
+			},
+			Coat{
+				Name:     "unused",
+				Request:  Request{Method: "GET", URI: "/unused"},
+				Response: &Response{Code: 200, Body: "ok"},
+			},
+		),
+	)
+	srv.Start(t)
+
+	resp, err := httpClient.Get(srv.URL + "/used")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	srv.AssertNotCalled(t, "unused")
+}
+
+func TestRequests_CapturesDetails(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "capture-test",
+			Request:  Request{Method: "POST", URI: "/capture"},
+			Response: &Response{Code: 201, Body: "created"},
+		}),
+	)
+	srv.Start(t)
+
+	req, _ := http.NewRequest("POST", srv.URL+"/capture", strings.NewReader(`{"name":"alice"}`))
+	req.Header.Set("X-Custom", "test-value")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	reqs := srv.Requests("capture-test")
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 captured request, got %d", len(reqs))
+	}
+	cr := reqs[0]
+	if cr.Method != "POST" {
+		t.Errorf("expected method POST, got %q", cr.Method)
+	}
+	if cr.URI != "/capture" {
+		t.Errorf("expected URI /capture, got %q", cr.URI)
+	}
+	if cr.Header.Get("X-Custom") != "test-value" {
+		t.Errorf("expected X-Custom header 'test-value', got %q", cr.Header.Get("X-Custom"))
+	}
+	if cr.Body != `{"name":"alice"}` {
+		t.Errorf("expected body %q, got %q", `{"name":"alice"}`, cr.Body)
+	}
+}
+
+func TestCapturedRequestQuerySeparation(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "query-test",
+			Request:  Request{Method: "GET", URI: "/search"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+	)
+	srv.Start(t)
+
+	resp, err := httpClient.Get(srv.URL + "/search?q=hello&page=2")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	reqs := srv.Requests("query-test")
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 captured request, got %d", len(reqs))
+	}
+	cr := reqs[0]
+	if cr.URI != "/search" {
+		t.Errorf("expected URI /search (path only), got %q", cr.URI)
+	}
+	if cr.RawQuery != "q=hello&page=2" {
+		t.Errorf("expected RawQuery 'q=hello&page=2', got %q", cr.RawQuery)
+	}
+}
+
+func TestResetCalls(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "resettable",
+			Request:  Request{Method: "GET", URI: "/reset"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+	)
+	srv.Start(t)
+
+	resp, err := httpClient.Get(srv.URL + "/reset")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	srv.AssertCalledN(t, "resettable", 1)
+	srv.ResetCalls()
+	srv.AssertNotCalled(t, "resettable")
+}
+
+// --- Public API TLS Support ---
+
+func TestWithSelfSignedTLS(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "tls-test",
+			Request:  Request{Method: "GET", URI: "/secure"},
+			Response: &Response{Code: 200, Body: "secure-ok"},
+		}),
+		WithSelfSignedTLS(),
+	)
+	srv.Start(t)
+
+	if !strings.HasPrefix(srv.URL, "https://") {
+		t.Fatalf("expected https:// URL, got %q", srv.URL)
+	}
+	if srv.TLSClient == nil {
+		t.Fatal("expected TLSClient to be set")
+	}
+
+	resp, err := srv.TLSClient.Get(srv.URL + "/secure")
+	if err != nil {
+		t.Fatalf("TLS request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != "secure-ok" {
+		t.Fatalf("expected 'secure-ok', got %q", body)
+	}
+}
+
+func TestWithSelfSignedTLS_AssertionsWork(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "tls-assert",
+			Request:  Request{Method: "GET", URI: "/check"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+		WithSelfSignedTLS(),
+	)
+	srv.Start(t)
+
+	resp, err := srv.TLSClient.Get(srv.URL + "/check")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	srv.AssertCalled(t, "tls-assert")
+	srv.AssertCalledN(t, "tls-assert", 1)
+}
+
+func TestRequests_EmptyForUnknownCoat(t *testing.T) {
+	srv := NewServer(
+		WithCoat(Coat{
+			Name:     "known",
+			Request:  Request{Method: "GET", URI: "/known"},
+			Response: &Response{Code: 200, Body: "ok"},
+		}),
+	)
+	srv.Start(t)
+
+	reqs := srv.Requests("nonexistent")
+	if len(reqs) != 0 {
+		t.Fatalf("expected 0 captured requests for unknown coat, got %d", len(reqs))
+	}
+}
+
 func TestWithCoatFile_InvalidCoat(t *testing.T) {
 	dir := t.TempDir()
 	coatFile := filepath.Join(dir, "bad.yaml")

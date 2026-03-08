@@ -5,6 +5,7 @@ package matcher
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/yesdevnull/trenchcoat/internal/coat"
 )
 
@@ -37,6 +39,7 @@ type entry struct {
 	index       int // original definition order
 	uriType     uriMatchType
 	regex       *regexp.Regexp // only for regex URIs
+	bodyRegex   *regexp.Regexp // only for body_match: regex
 	literalLen  int            // length of literal prefix for glob patterns
 	specificity int            // number of qualifiers (headers + query)
 	method      string         // effective method (uppercased, defaulted to GET)
@@ -60,6 +63,14 @@ type Matcher struct {
 	entries []*entry
 }
 
+// resolvedName returns the coat's name, or a fallback like "coat[N]" if unnamed.
+func (e *entry) resolvedName() string {
+	if e.coat.Name != "" {
+		return e.coat.Name
+	}
+	return fmt.Sprintf("coat[%d]", e.index)
+}
+
 // New creates a Matcher from the given coats.
 func New(coats []coat.Coat) *Matcher {
 	entries := make([]*entry, 0, len(coats))
@@ -74,12 +85,12 @@ func New(coats []coat.Coat) *Matcher {
 			e.uriType = uriRegex
 			pattern := strings.TrimPrefix(c.Request.URI, "~")
 			re, err := regexp.Compile("^" + pattern + "$")
-			if err != nil {
-				// Skip coats with invalid regex (should be caught by validation).
-				continue
+			if err == nil {
+				e.regex = re
 			}
-			e.regex = re
-		} else if strings.ContainsAny(c.Request.URI, "*?") {
+			// Invalid regex: keep the entry (for diagnostics) but leave e.regex
+			// nil so matchesURI will never match it.
+		} else if strings.ContainsAny(c.Request.URI, "*?[") {
 			e.uriType = uriGlob
 			// Compute literal prefix length (characters before first wildcard).
 			for _, ch := range c.Request.URI {
@@ -113,6 +124,16 @@ func New(coats []coat.Coat) *Matcher {
 		}
 		if c.Request.Body != nil {
 			e.specificity++
+		}
+
+		// Pre-compile body regex if body_match is "regex".
+		// Invalid regex: keep the entry (for diagnostics) but leave bodyRegex
+		// nil so matchesBody will never match it.
+		if c.Request.BodyMatch == "regex" && c.Request.Body != nil {
+			re, err := regexp.Compile(*c.Request.Body)
+			if err == nil {
+				e.bodyRegex = re
+			}
 		}
 
 		entries = append(entries, e)
@@ -216,7 +237,7 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 
 	best := candidates[0].entry
 	result := &MatchResult{
-		Name: best.coat.Name,
+		Name: best.resolvedName(),
 		Coat: best.coat,
 	}
 
@@ -257,6 +278,213 @@ func (m *Matcher) ResetSequences() {
 		e.seqCounter = 0
 		e.seqMu.Unlock()
 	}
+}
+
+// Mismatch describes why a coat did not match an incoming request.
+type Mismatch struct {
+	CoatName string `json:"coat_name"`
+	Reason   string `json:"reason"`
+	// stages is the number of match stages passed before failure (internal use for sorting).
+	stages int
+}
+
+// maxNearMisses is the maximum number of near-miss diagnostics returned.
+const maxNearMisses = 5
+
+// MatchVerbose works like Match but also returns diagnostic near-miss information
+// when no coat matches. The mismatches slice is only populated when the result is nil.
+func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
+	type candidate struct {
+		entry *entry
+		score matchScore
+	}
+
+	var reqBody []byte
+	var reqBodyStr string
+	var bodyRead bool
+	var bodyReadErr bool
+	getBody := func() (string, bool) {
+		if bodyRead {
+			return reqBodyStr, bodyReadErr
+		}
+		bodyRead = true
+		if req.Body != nil {
+			origBody := req.Body
+			limited := io.LimitReader(origBody, maxBodyMatchSize+1)
+			allRead, err := io.ReadAll(limited)
+			if err != nil {
+				bodyReadErr = true
+			}
+			if len(allRead) > maxBodyMatchSize {
+				bodyReadErr = true
+				reqBody = allRead[:maxBodyMatchSize]
+			} else {
+				reqBody = allRead
+			}
+			reqBodyStr = string(reqBody)
+			req.Body = struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: io.MultiReader(bytes.NewReader(allRead), origBody),
+				Closer: origBody,
+			}
+		}
+		return reqBodyStr, bodyReadErr
+	}
+
+	var candidates []candidate
+	var mismatches []Mismatch
+
+	for _, e := range m.entries {
+		name := e.resolvedName()
+
+		if !matchesMethod(e, req.Method) {
+			mismatches = append(mismatches, Mismatch{
+				CoatName: name,
+				Reason:   fmt.Sprintf("method mismatch: expected %s, got %s", e.method, req.Method),
+				stages:   0,
+			})
+			continue
+		}
+		if !matchesURI(e, req.URL.Path) {
+			mismatches = append(mismatches, Mismatch{
+				CoatName: name,
+				Reason:   fmt.Sprintf("URI mismatch: pattern %q did not match %q", e.coat.Request.URI, req.URL.Path),
+				stages:   1,
+			})
+			continue
+		}
+		if !matchesHeaders(e, req.Header) {
+			reason := diagnoseHeaderMismatch(e, req.Header)
+			mismatches = append(mismatches, Mismatch{
+				CoatName: name,
+				Reason:   reason,
+				stages:   2,
+			})
+			continue
+		}
+		if !matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
+			reason := diagnoseQueryMismatch(e, req.URL.RawQuery, req.URL.Query())
+			mismatches = append(mismatches, Mismatch{
+				CoatName: name,
+				Reason:   reason,
+				stages:   3,
+			})
+			continue
+		}
+		if !matchesBody(e, getBody) {
+			mismatches = append(mismatches, Mismatch{
+				CoatName: name,
+				Reason:   "body mismatch",
+				stages:   4,
+			})
+			continue
+		}
+
+		candidates = append(candidates, candidate{
+			entry: e,
+			score: computeScore(e),
+		})
+	}
+
+	if len(candidates) == 0 {
+		// Sort mismatches by closeness (more stages passed = closer match).
+		sort.SliceStable(mismatches, func(i, j int) bool {
+			return mismatches[i].stages > mismatches[j].stages
+		})
+		if len(mismatches) > maxNearMisses {
+			mismatches = mismatches[:maxNearMisses]
+		}
+		return nil, mismatches
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].score.betterThan(candidates[j].score)
+	})
+
+	best := candidates[0].entry
+	result := &MatchResult{
+		Name: best.resolvedName(),
+		Coat: best.coat,
+	}
+
+	if len(best.coat.Responses) > 0 {
+		best.seqMu.Lock()
+		defer best.seqMu.Unlock()
+
+		idx := best.seqCounter
+		seq := best.coat.Sequence
+		if seq == "" {
+			seq = "cycle"
+		}
+
+		if seq == "once" && idx >= len(best.coat.Responses) {
+			result.ResponseIdx = -1
+			result.Exhausted = true
+			return result, nil
+		}
+
+		if seq == "cycle" {
+			idx = idx % len(best.coat.Responses)
+		}
+
+		best.seqCounter++
+		result.ResponseIdx = idx
+	} else {
+		result.ResponseIdx = -1
+	}
+
+	return result, nil
+}
+
+func diagnoseHeaderMismatch(e *entry, reqHeaders http.Header) string {
+	for key, pattern := range e.coat.Request.Headers {
+		values := reqHeaders.Values(key)
+		if len(values) == 0 {
+			return fmt.Sprintf("header mismatch: missing header %s", key)
+		}
+		matched := false
+		for _, v := range values {
+			if globMatch(pattern, v) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Sprintf("header mismatch: %s value did not match pattern %q", key, pattern)
+		}
+	}
+	return "header mismatch"
+}
+
+func diagnoseQueryMismatch(e *entry, rawQuery string, queryValues map[string][]string) string {
+	q := e.coat.Request.Query
+	if q == nil {
+		return "query mismatch"
+	}
+	if q.Raw != "" {
+		return fmt.Sprintf("query mismatch: expected raw query %q, got %q", q.Raw, rawQuery)
+	}
+	if q.Map != nil {
+		for key, pattern := range q.Map {
+			values, ok := queryValues[key]
+			if !ok || len(values) == 0 {
+				return fmt.Sprintf("query mismatch: missing parameter %s", key)
+			}
+			matched := false
+			for _, v := range values {
+				if globMatch(pattern, v) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Sprintf("query mismatch: %s=%s did not match pattern %q", key, values[0], pattern)
+			}
+		}
+	}
+	return "query mismatch"
 }
 
 // matchScore represents the sorting criteria for match precedence.
@@ -308,10 +536,10 @@ func matchesURI(e *entry, reqPath string) bool {
 	case uriExact:
 		return e.coat.Request.URI == reqPath
 	case uriGlob:
-		matched, _ := path.Match(e.coat.Request.URI, reqPath)
+		matched, _ := doublestar.Match(e.coat.Request.URI, reqPath)
 		return matched
 	case uriRegex:
-		return e.regex.MatchString(reqPath)
+		return e.regex != nil && e.regex.MatchString(reqPath)
 	}
 	return false
 }
@@ -379,11 +607,24 @@ func matchesBody(e *entry, getBody func() (string, bool)) bool {
 	if readErr {
 		return false // Treat read errors as non-match.
 	}
-	return body == *e.coat.Request.Body
+	switch e.coat.Request.BodyMatch {
+	case "glob":
+		return globMatch(*e.coat.Request.Body, body)
+	case "contains":
+		return strings.Contains(body, *e.coat.Request.Body)
+	case "regex":
+		if e.bodyRegex != nil {
+			return e.bodyRegex.MatchString(body)
+		}
+		return false
+	default: // "" or "exact"
+		return body == *e.coat.Request.Body
+	}
 }
 
 // globMatch performs simple glob matching on a string value.
-// Supports * (any characters) and ? (single character).
+// Uses path.Match which supports * (any characters within a segment) and ? (single character).
+// This is used for header values, query values, and body matching — not URI paths.
 func globMatch(pattern, value string) bool {
 	matched, _ := path.Match(pattern, value)
 	return matched

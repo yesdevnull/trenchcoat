@@ -1,6 +1,7 @@
 package matcher_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -151,6 +152,74 @@ func TestMatch_GlobQuestionMark(t *testing.T) {
 	if m.Match(req) == nil {
 		t.Fatal("expected match for v2")
 	}
+}
+
+// --- Doublestar glob URI matching ---
+
+func TestMatch_DoublestarGlob(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "doublestar",
+			Request:  coat.Request{Method: "GET", URI: "/api/**/posts/*"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	// Should match multi-segment paths.
+	req := newRequest(t, "GET", "/api/v1/users/123/posts/456", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected doublestar glob match for multi-segment path")
+	}
+	assertEqual(t, "name", "doublestar", result.Name)
+
+	// Should match single-segment paths too (** matches zero or more).
+	req = newRequest(t, "GET", "/api/v1/posts/1", nil)
+	result = m.Match(req)
+	if result == nil {
+		t.Fatal("expected doublestar glob match for single-segment path")
+	}
+}
+
+func TestMatch_DoublestarGlob_NoMatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "doublestar",
+			Request:  coat.Request{Method: "GET", URI: "/api/**/posts"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users/123/comments", nil)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match for path not ending in /posts")
+	}
+}
+
+func TestMatch_Precedence_ExactBeforeDoublestar(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "doublestar",
+			Request:  coat.Request{Method: "GET", URI: "/api/**/users"},
+			Response: &coat.Response{Code: 200},
+		},
+		{
+			Name:     "exact",
+			Request:  coat.Request{Method: "GET", URI: "/api/v1/users"},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	assertEqual(t, "name", "exact", result.Name)
 }
 
 // --- Regex URI matching ---
@@ -785,6 +854,372 @@ func TestMatch_DifferentBodies_DifferentCoats(t *testing.T) {
 		t.Fatal("expected match for bob")
 	}
 	assertEqual(t, "name", "create-bob", result.Name)
+}
+
+// --- Body match modes ---
+
+func TestMatch_BodyMatch_Glob(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "glob-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`{"name": "*", "email": "*@example.com"}`),
+				BodyMatch: "glob",
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice", "email": "alice@example.com"}`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected glob body match")
+	}
+	assertEqual(t, "name", "glob-body", result.Name)
+}
+
+func TestMatch_BodyMatch_Glob_NoMatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "glob-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`{"name": "*"}`),
+				BodyMatch: "glob",
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	// Multi-line body won't match single-line glob pattern.
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, "no match here\nnewline")
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match for non-matching glob body")
+	}
+}
+
+func TestMatch_BodyMatch_Contains(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "contains-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`"name": "alice"`),
+				BodyMatch: "contains",
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice", "email": "alice@example.com"}`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected contains body match")
+	}
+	assertEqual(t, "name", "contains-body", result.Name)
+}
+
+func TestMatch_BodyMatch_Contains_NoMatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "contains-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`"name": "bob"`),
+				BodyMatch: "contains",
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice"}`)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match for non-matching contains body")
+	}
+}
+
+func TestMatch_BodyMatch_Regex(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "regex-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`\{"name":\s*"[a-z]+"\}`),
+				BodyMatch: "regex",
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `{"name": "alice"}`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected regex body match")
+	}
+	assertEqual(t, "name", "regex-body", result.Name)
+}
+
+func TestMatch_BodyMatch_Regex_NoMatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "regex-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`^\d+$`),
+				BodyMatch: "regex",
+			},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `not-a-number`)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match for non-matching regex body")
+	}
+}
+
+func TestMatch_BodyMatch_Exact_Default(t *testing.T) {
+	// Verify that the default (empty BodyMatch) still works as exact.
+	coats := []coat.Coat{
+		{
+			Name: "exact-default",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/api/v1/users",
+				Body:   coat.StringPtr(`exact match`),
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `exact match`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected exact match with empty BodyMatch")
+	}
+
+	req2 := newRequestWithBody(t, "POST", "/api/v1/users", nil, `not exact match`)
+	result2 := m.Match(req2)
+	if result2 != nil {
+		t.Fatal("expected no match for different body with exact mode")
+	}
+}
+
+func TestMatch_BodyMatch_ExplicitExact(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "explicit-exact",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/api/v1/users",
+				Body:      coat.StringPtr(`exact`),
+				BodyMatch: "exact",
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/api/v1/users", nil, `exact`)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected explicit exact match")
+	}
+}
+
+// --- MatchVerbose diagnostics ---
+
+func TestMatchVerbose_MethodMismatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "post-only",
+			Request:  coat.Request{Method: "POST", URI: "/api/v1/users"},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users", nil)
+	result, mismatches := m.MatchVerbose(req)
+	if result != nil {
+		t.Fatal("expected no match")
+	}
+	if len(mismatches) == 0 {
+		t.Fatal("expected at least one mismatch")
+	}
+	if !strings.Contains(mismatches[0].Reason, "method mismatch") {
+		t.Fatalf("expected method mismatch reason, got %q", mismatches[0].Reason)
+	}
+	assertEqual(t, "coat_name", "post-only", mismatches[0].CoatName)
+}
+
+func TestMatchVerbose_URIMismatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "exact-path",
+			Request:  coat.Request{Method: "GET", URI: "/api/v1/users"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v2/users", nil)
+	result, mismatches := m.MatchVerbose(req)
+	if result != nil {
+		t.Fatal("expected no match")
+	}
+	if len(mismatches) == 0 {
+		t.Fatal("expected at least one mismatch")
+	}
+	if !strings.Contains(mismatches[0].Reason, "URI mismatch") {
+		t.Fatalf("expected URI mismatch reason, got %q", mismatches[0].Reason)
+	}
+}
+
+func TestMatchVerbose_HeaderMismatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "auth-required",
+			Request: coat.Request{
+				Method:  "GET",
+				URI:     "/api/v1/users",
+				Headers: map[string]string{"Authorization": "Bearer *"},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users", nil)
+	result, mismatches := m.MatchVerbose(req)
+	if result != nil {
+		t.Fatal("expected no match")
+	}
+	if len(mismatches) == 0 {
+		t.Fatal("expected at least one mismatch")
+	}
+	if !strings.Contains(mismatches[0].Reason, "header mismatch") {
+		t.Fatalf("expected header mismatch reason, got %q", mismatches[0].Reason)
+	}
+	if !strings.Contains(mismatches[0].Reason, "Authorization") {
+		t.Fatalf("expected Authorization in reason, got %q", mismatches[0].Reason)
+	}
+}
+
+func TestMatchVerbose_QueryMismatch(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "paginated",
+			Request: coat.Request{
+				Method: "GET",
+				URI:    "/api/v1/users",
+				Query:  &coat.QueryField{Map: map[string]string{"page": "1"}},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users?page=2", nil)
+	result, mismatches := m.MatchVerbose(req)
+	if result != nil {
+		t.Fatal("expected no match")
+	}
+	if len(mismatches) == 0 {
+		t.Fatal("expected at least one mismatch")
+	}
+	if !strings.Contains(mismatches[0].Reason, "query mismatch") {
+		t.Fatalf("expected query mismatch reason, got %q", mismatches[0].Reason)
+	}
+}
+
+func TestMatchVerbose_NearMissOrdering(t *testing.T) {
+	// The coat that passes more stages should appear first.
+	coats := []coat.Coat{
+		{
+			Name:     "wrong-method",
+			Request:  coat.Request{Method: "POST", URI: "/api/v1/users"},
+			Response: &coat.Response{Code: 201},
+		},
+		{
+			Name: "wrong-header",
+			Request: coat.Request{
+				Method:  "GET",
+				URI:     "/api/v1/users",
+				Headers: map[string]string{"Authorization": "Bearer *"},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users", nil)
+	result, mismatches := m.MatchVerbose(req)
+	if result != nil {
+		t.Fatal("expected no match")
+	}
+	if len(mismatches) < 2 {
+		t.Fatalf("expected at least 2 mismatches, got %d", len(mismatches))
+	}
+	// "wrong-header" passed method+URI before failing, so it should be first.
+	assertEqual(t, "first near-miss", "wrong-header", mismatches[0].CoatName)
+	assertEqual(t, "second near-miss", "wrong-method", mismatches[1].CoatName)
+}
+
+func TestMatchVerbose_Limit(t *testing.T) {
+	// Create more than maxNearMisses coats.
+	var coats []coat.Coat
+	for i := range 10 {
+		coats = append(coats, coat.Coat{
+			Name:     fmt.Sprintf("coat-%d", i),
+			Request:  coat.Request{Method: "POST", URI: fmt.Sprintf("/path-%d", i)},
+			Response: &coat.Response{Code: 200},
+		})
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/nonexistent", nil)
+	_, mismatches := m.MatchVerbose(req)
+	if len(mismatches) > 5 {
+		t.Fatalf("expected at most 5 near-misses, got %d", len(mismatches))
+	}
+}
+
+func TestMatchVerbose_MatchReturnsNoMismatches(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "exact",
+			Request:  coat.Request{Method: "GET", URI: "/api/v1/users"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/api/v1/users", nil)
+	result, mismatches := m.MatchVerbose(req)
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	if len(mismatches) != 0 {
+		t.Fatalf("expected no mismatches on successful match, got %d", len(mismatches))
+	}
 }
 
 // --- Helpers ---
