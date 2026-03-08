@@ -176,7 +176,7 @@ coats:
         Content-Type: "application/json"
       body: '{"users": []}'         # or body_file: "./fixtures/data.json"
       delay_ms: 0
-      delay_jitter_ms: 0            # random delay added to delay_ms (0-N ms)
+      delay_jitter_ms: 0            # random delay added to delay_ms, in [0, N) ms
     # OR for sequences (mutually exclusive with response):
     responses:
       - code: 503

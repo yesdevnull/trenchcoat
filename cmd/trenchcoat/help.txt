@@ -60,7 +60,7 @@ COAT FILE FORMAT
     body_file        Path to file for response body (relative to coat file).
                      Mutually exclusive with body.
     delay_ms         Milliseconds to wait before responding.
-    delay_jitter_ms  Random jitter (0 to N ms) added on top of delay_ms.
+    delay_jitter_ms  Random jitter in [0, N) ms added on top of delay_ms.
 
   Response body templates — if the body contains "{{", it is rendered as a
   Go text/template with these fields:
