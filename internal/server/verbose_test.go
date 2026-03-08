@@ -126,6 +126,52 @@ func TestServe_VerboseLogging_QualifiersAndFile(t *testing.T) {
 	}
 }
 
+func TestServe_VerboseLogging_UnnamedCoatFilePath(t *testing.T) {
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "unnamed.yaml")
+	if err := os.WriteFile(coatFile, []byte(`coats:
+  - request:
+      uri: /unnamed-test
+    response:
+      code: 200
+      body: "hello"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, errs := coat.LoadPaths([]string{coatFile})
+	if len(errs) > 0 {
+		t.Fatalf("load errors: %v", errs)
+	}
+
+	var logBuf bytes.Buffer
+	srv := server.New(loaded, server.Config{
+		Verbose: true,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(srv.URL() + "/unnamed-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	assertEqual(t, "status", 200, resp.StatusCode)
+
+	logOutput := logBuf.String()
+	// Unnamed coats should still have their file path logged.
+	if !strings.Contains(logOutput, "file=") {
+		t.Errorf("expected 'file=' in log output for unnamed coat, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, coatFile) {
+		t.Errorf("expected coat file path %q in log output, got:\n%s", coatFile, logOutput)
+	}
+}
+
 func TestServe_EmptyBody(t *testing.T) {
 	coats := []coat.LoadedCoat{
 		{

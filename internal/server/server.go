@@ -188,7 +188,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	var coatFilePath string
 	if s.verbose {
 		for _, lc := range allCoats {
-			if lc.Coat.Name == result.Name &&
+			if lc.Coat.Name == result.Coat.Name &&
 				lc.Coat.Request.URI == result.Coat.Request.URI &&
 				lc.Coat.Request.Method == result.Coat.Request.Method {
 				coatFilePath = lc.FilePath
