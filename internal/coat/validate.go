@@ -172,7 +172,7 @@ func checkDuplicateNames(coats []Coat) []*ValidationWarning {
 }
 
 // simpleRegexPattern matches regex URIs that only use basic patterns equivalent to glob.
-var simpleRegexPattern = regexp.MustCompile(`^[A-Za-z0-9/_.\-]+(\.\*|\[^/\]\+|\[^/\]\*)+[A-Za-z0-9/_.\-]*$`)
+var simpleRegexPattern = regexp.MustCompile(`^[A-Za-z0-9/_.\-]+(\.\*|\[\^/\]\+|\[\^/\]\*)+[A-Za-z0-9/_.\-]*$`)
 
 // checkSimpleRegex warns when a regex URI pattern could be expressed as a simpler glob.
 func checkSimpleRegex(coats []Coat) []*ValidationWarning {

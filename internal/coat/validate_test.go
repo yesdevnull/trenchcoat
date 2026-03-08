@@ -434,6 +434,32 @@ func TestValidateWithWarnings_SimpleRegexWarning(t *testing.T) {
 	}
 }
 
+func TestValidateWithWarnings_SimpleRegexBracketPattern(t *testing.T) {
+	f := &File{
+		Coats: []Coat{
+			{
+				Name:     "bracket-regex",
+				Request:  Request{URI: `~/api/v1/users/[^/]+`},
+				Response: &Response{Code: 200},
+			},
+		},
+	}
+	result := ValidateWithWarnings(f)
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors, got: %v", result.Errors)
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w.Message, "simpler glob") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'simpler glob' warning for ~/api/v1/users/[^/]+, got warnings: %v", result.Warnings)
+	}
+}
+
 func TestValidateWithWarnings_ComplexRegexNoWarning(t *testing.T) {
 	f := &File{
 		Coats: []Coat{
