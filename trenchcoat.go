@@ -163,8 +163,14 @@ func (s *Server) Start(t testing.TB) {
 	}
 
 	s.inner = server.New(s.coats, server.Config{
-		Verbose: s.verbose,
+		Verbose:     s.verbose,
+		RecordCalls: true, // always record for test assertions
 	})
+
+	// Validate that both cert and key are provided together.
+	if (s.tlsCertFile != "") != (s.tlsKeyFile != "") {
+		t.Fatalf("trenchcoat: WithTLS requires both certFile and keyFile; got certFile=%q, keyFile=%q", s.tlsCertFile, s.tlsKeyFile)
+	}
 
 	useTLS := s.tlsCertFile != "" || s.selfSigned
 
@@ -245,23 +251,29 @@ func generateSelfSignedCert(t testing.TB) (certFile, keyFile string, pool *x509.
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
 		t.Fatal(err)
 	}
-	_ = certOut.Close()
+	if err := certOut.Close(); err != nil {
+		t.Fatalf("trenchcoat: failed to close cert file: %v", err)
+	}
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		t.Fatalf("trenchcoat: failed to marshal key: %v", err)
 	}
-	keyOut, err := os.Create(keyFile)
+	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		t.Fatalf("trenchcoat: failed to create key file: %v", err)
 	}
 	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
 		t.Fatal(err)
 	}
-	_ = keyOut.Close()
+	if err := keyOut.Close(); err != nil {
+		t.Fatalf("trenchcoat: failed to close key file: %v", err)
+	}
 
 	pool = x509.NewCertPool()
-	pool.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+	if ok := pool.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})); !ok {
+		t.Fatalf("trenchcoat: failed to append certificate to pool")
+	}
 
 	return certFile, keyFile, pool
 }

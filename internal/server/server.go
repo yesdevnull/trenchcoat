@@ -33,10 +33,11 @@ type CapturedRequest struct {
 
 // Server is the Trenchcoat mock HTTP server.
 type Server struct {
-	httpServer *http.Server
-	listener   net.Listener
-	logger     *slog.Logger
-	verbose    bool
+	httpServer  *http.Server
+	listener    net.Listener
+	logger      *slog.Logger
+	verbose     bool
+	recordCalls bool
 
 	mu      sync.RWMutex
 	matcher *matcher.Matcher
@@ -48,8 +49,9 @@ type Server struct {
 
 // Config holds server configuration.
 type Config struct {
-	Verbose bool
-	Logger  *slog.Logger
+	Verbose     bool
+	RecordCalls bool // when true, capture full request details for assertions
+	Logger      *slog.Logger
 }
 
 // New creates a new Server with the given coats and configuration.
@@ -59,11 +61,12 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 	}
 
 	s := &Server{
-		logger:  cfg.Logger,
-		verbose: cfg.Verbose,
-		matcher: matcher.New(extractCoats(loaded)),
-		coats:   loaded,
-		calls:   make(map[string][]CapturedRequest),
+		logger:      cfg.Logger,
+		verbose:     cfg.Verbose,
+		recordCalls: cfg.RecordCalls,
+		matcher:     matcher.New(extractCoats(loaded)),
+		coats:       loaded,
+		calls:       make(map[string][]CapturedRequest),
 	}
 
 	s.httpServer = &http.Server{
@@ -172,13 +175,21 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record the matched request for call counting / assertions.
-	s.recordCall(result.Name, r)
+	// Gated behind RecordCalls to avoid unbounded memory growth in
+	// long-running CLI serve mode where assertions are not used.
+	if s.recordCalls {
+		s.recordCall(result.Name, r)
+	}
 
 	// Look up the coat's source file path for logging.
+	// Match on name+method+uri to avoid returning the wrong file when
+	// duplicate coat names exist across different files.
 	var coatFilePath string
 	if s.verbose {
 		for _, lc := range allCoats {
-			if lc.Coat.Name == result.Name {
+			if lc.Coat.Name == result.Name &&
+				lc.Coat.Request.URI == result.Coat.Request.URI &&
+				lc.Coat.Request.Method == result.Coat.Request.Method {
 				coatFilePath = lc.FilePath
 				break
 			}
