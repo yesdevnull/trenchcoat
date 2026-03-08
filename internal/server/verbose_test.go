@@ -172,6 +172,53 @@ func TestServe_VerboseLogging_UnnamedCoatFilePath(t *testing.T) {
 	}
 }
 
+func TestServe_VerboseLogging_AmbiguousCoatOmitsFilePath(t *testing.T) {
+	// When multiple coats share the same name+method+URI across different
+	// files, the file path should be omitted to avoid misattribution.
+	coats := []coat.LoadedCoat{
+		{
+			FilePath: "/fake/a.yaml",
+			Coat: coat.Coat{
+				Name:     "dupe",
+				Request:  coat.Request{Method: "GET", URI: "/ambiguous"},
+				Response: &coat.Response{Code: 200, Body: "a"},
+			},
+		},
+		{
+			FilePath: "/fake/b.yaml",
+			Coat: coat.Coat{
+				Name:     "dupe",
+				Request:  coat.Request{Method: "GET", URI: "/ambiguous"},
+				Response: &coat.Response{Code: 200, Body: "b"},
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	srv := server.New(coats, server.Config{
+		Verbose: true,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(srv.URL() + "/ambiguous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	assertEqual(t, "status", 200, resp.StatusCode)
+
+	logOutput := logBuf.String()
+	// File path should NOT appear because the match is ambiguous.
+	if strings.Contains(logOutput, "file=") {
+		t.Errorf("expected no 'file=' in log output for ambiguous coats, got:\n%s", logOutput)
+	}
+}
+
 func TestServe_EmptyBody(t *testing.T) {
 	coats := []coat.LoadedCoat{
 		{
