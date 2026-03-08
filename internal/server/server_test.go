@@ -787,3 +787,43 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 		t.Errorf("%s: expected %v, got %v", field, expected, actual)
 	}
 }
+
+func TestCalls_ReturnsClonedHeaders(t *testing.T) {
+	coats := []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:     "clone-test",
+				Request:  coat.Request{Method: "GET", URI: "/clone"},
+				Response: &coat.Response{Code: 200, Body: "ok"},
+			},
+		},
+	}
+
+	srv := server.New(coats, server.Config{RecordCalls: true})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	req, _ := http.NewRequest("GET", srv.URL()+"/clone", nil)
+	req.Header.Set("X-Test", "original")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// Get captured requests and mutate the returned header.
+	calls := srv.Calls("clone-test")
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	calls[0].Header.Set("X-Test", "mutated")
+
+	// Fetch again — the internal storage should be unaffected.
+	calls2 := srv.Calls("clone-test")
+	if calls2[0].Header.Get("X-Test") != "original" {
+		t.Errorf("expected internal header to remain 'original', got %q", calls2[0].Header.Get("X-Test"))
+	}
+}

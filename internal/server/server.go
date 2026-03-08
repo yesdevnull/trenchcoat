@@ -183,17 +183,24 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up the coat's source file path for logging.
-	// Match on name+method+uri to avoid returning the wrong file when
-	// duplicate coat names exist across different files.
+	// Match on name+method+uri, but only use the path when there is a
+	// single unique match to avoid attributing the request to the wrong file
+	// when duplicate coats exist across different files or names are empty.
 	var coatFilePath string
 	if s.verbose {
+		var matchedPath string
+		matchCount := 0
 		for _, lc := range allCoats {
 			if lc.Coat.Name == result.Coat.Name &&
 				lc.Coat.Request.URI == result.Coat.Request.URI &&
 				lc.Coat.Request.Method == result.Coat.Request.Method {
-				coatFilePath = lc.FilePath
-				break
+				matchCount++
+				matchedPath = lc.FilePath
+				// Keep scanning to detect ambiguity when multiple coats match.
 			}
+		}
+		if matchCount == 1 {
+			coatFilePath = matchedPath
 		}
 	}
 
@@ -420,7 +427,12 @@ func (s *Server) Calls(name string) []CapturedRequest {
 	defer s.callsMu.Unlock()
 	reqs := s.calls[name]
 	out := make([]CapturedRequest, len(reqs))
-	copy(out, reqs)
+	for i, req := range reqs {
+		out[i] = req
+		if req.Header != nil {
+			out[i].Header = req.Header.Clone()
+		}
+	}
 	return out
 }
 
