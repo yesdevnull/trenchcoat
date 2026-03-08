@@ -458,10 +458,12 @@ func renderTemplate(body string, r *http.Request) string {
 		return body
 	}
 
-	// Read request body for template use.
+	// Read request body for template use, capped at maxRecordBodySize to
+	// prevent excessive memory usage from large request bodies.
 	var reqBody string
 	if r.Body != nil {
-		bodyBytes, readErr := io.ReadAll(r.Body)
+		limited := io.LimitReader(r.Body, maxRecordBodySize)
+		bodyBytes, readErr := io.ReadAll(limited)
 		_ = r.Body.Close()
 		if readErr == nil {
 			reqBody = string(bodyBytes)
