@@ -1017,17 +1017,23 @@ func TestProxy_PrettyJSON(t *testing.T) {
 	}
 	contentStr := string(content)
 
-	// Pretty JSON should have indentation.
-	if !strings.Contains(contentStr, "  ") {
-		t.Fatalf("expected pretty-printed JSON with indentation, got:\n%s", contentStr)
-	}
 	// Verify it's valid JSON when extracted.
 	var captured coat.File
 	if err := yaml.Unmarshal(content, &captured); err != nil {
 		t.Fatalf("failed to unmarshal: %v", err)
 	}
-	if !json.Valid([]byte(captured.Coats[0].Response.Body)) {
-		t.Fatalf("expected valid JSON in response body, got: %s", captured.Coats[0].Response.Body)
+	body := captured.Coats[0].Response.Body
+	if !json.Valid([]byte(body)) {
+		t.Fatalf("expected valid JSON in response body, got: %s", body)
+	}
+
+	// Pretty JSON should match json.Indent output (i.e., include indentation/newlines).
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, []byte(compactJSON), "", "  "); err != nil {
+		t.Fatalf("failed to indent JSON: %v", err)
+	}
+	if body != pretty.String() {
+		t.Fatalf("expected pretty-printed JSON body:\n%s\n\ngot:\n%s\n\nfull coat file:\n%s", pretty.String(), body, contentStr)
 	}
 }
 
