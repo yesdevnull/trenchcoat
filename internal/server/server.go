@@ -590,12 +590,22 @@ func resolveBodyFile(bodyFile string, c coat.Coat, allCoats []coat.LoadedCoat) (
 		return nil, fmt.Errorf("unable to resolve body_file path: %w", err)
 	}
 
+	// Resolve symlinks to prevent escapes via symlinked paths.
+	canonicalBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve base directory symlinks: %w", err)
+	}
+	canonicalResolved, err := filepath.EvalSymlinks(absResolved)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve body_file path symlinks: %w", err)
+	}
+
 	// The resolved path must be within (or equal to) the base directory.
-	if !isSubPath(absBase, absResolved) {
+	if !isSubPath(canonicalBase, canonicalResolved) {
 		return nil, fmt.Errorf("body_file path escapes the coat file directory")
 	}
 
-	return os.ReadFile(resolved)
+	return os.ReadFile(canonicalResolved)
 }
 
 // isSubPath reports whether child is within or equal to parent.
