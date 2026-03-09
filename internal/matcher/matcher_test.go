@@ -1072,7 +1072,7 @@ func TestMatch_BodyExceedsMaxSize_NoMatch(t *testing.T) {
 	}
 }
 
-func TestMatch_BodyJustUnderMaxSize_Matches(t *testing.T) {
+func TestMatch_BodyAtMaxSize_Matches(t *testing.T) {
 	const maxBodyMatchSize = 1 << 20 // 1 MiB — mirrors the constant in matcher.go
 
 	// Build a body that is exactly maxBodyMatchSize bytes.
