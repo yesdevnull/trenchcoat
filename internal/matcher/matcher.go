@@ -293,6 +293,8 @@ const maxNearMisses = 5
 
 // MatchVerbose works like Match but also returns diagnostic near-miss information
 // when no coat matches. The mismatches slice is only populated when the result is nil.
+// Uses a two-pass approach: the first pass finds candidates (no allocations for
+// mismatches), and a second pass collects near-miss diagnostics only when needed.
 func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 	type candidate struct {
 		entry *entry
@@ -333,9 +335,74 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 		return reqBodyStr, bodyReadErr
 	}
 
+	// First pass: find candidates only (no mismatch allocation).
 	var candidates []candidate
-	var mismatches []Mismatch
+	for _, e := range m.entries {
+		if !matchesMethod(e, req.Method) {
+			continue
+		}
+		if !matchesURI(e, req.URL.Path) {
+			continue
+		}
+		if !matchesHeaders(e, req.Header) {
+			continue
+		}
+		if !matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
+			continue
+		}
+		if !matchesBody(e, getBody) {
+			continue
+		}
 
+		candidates = append(candidates, candidate{
+			entry: e,
+			score: computeScore(e),
+		})
+	}
+
+	// If we found candidates, return the best match without collecting mismatches.
+	if len(candidates) > 0 {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			return candidates[i].score.betterThan(candidates[j].score)
+		})
+
+		best := candidates[0].entry
+		result := &MatchResult{
+			Name: best.resolvedName(),
+			Coat: best.coat,
+		}
+
+		if len(best.coat.Responses) > 0 {
+			best.seqMu.Lock()
+			defer best.seqMu.Unlock()
+
+			idx := best.seqCounter
+			seq := best.coat.Sequence
+			if seq == "" {
+				seq = "cycle"
+			}
+
+			if seq == "once" && idx >= len(best.coat.Responses) {
+				result.ResponseIdx = -1
+				result.Exhausted = true
+				return result, nil
+			}
+
+			if seq == "cycle" {
+				idx = idx % len(best.coat.Responses)
+			}
+
+			best.seqCounter++
+			result.ResponseIdx = idx
+		} else {
+			result.ResponseIdx = -1
+		}
+
+		return result, nil
+	}
+
+	// Second pass: no candidates found, collect near-miss diagnostics.
+	var mismatches []Mismatch
 	for _, e := range m.entries {
 		name := e.resolvedName()
 
@@ -373,69 +440,22 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 			})
 			continue
 		}
-		if !matchesBody(e, getBody) {
-			mismatches = append(mismatches, Mismatch{
-				CoatName: name,
-				Reason:   "body mismatch",
-				stages:   4,
-			})
-			continue
-		}
-
-		candidates = append(candidates, candidate{
-			entry: e,
-			score: computeScore(e),
+		// Body must have mismatched (we already know no candidates exist).
+		mismatches = append(mismatches, Mismatch{
+			CoatName: name,
+			Reason:   "body mismatch",
+			stages:   4,
 		})
 	}
 
-	if len(candidates) == 0 {
-		// Sort mismatches by closeness (more stages passed = closer match).
-		sort.SliceStable(mismatches, func(i, j int) bool {
-			return mismatches[i].stages > mismatches[j].stages
-		})
-		if len(mismatches) > maxNearMisses {
-			mismatches = mismatches[:maxNearMisses]
-		}
-		return nil, mismatches
-	}
-
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].score.betterThan(candidates[j].score)
+	// Sort mismatches by closeness (more stages passed = closer match).
+	sort.SliceStable(mismatches, func(i, j int) bool {
+		return mismatches[i].stages > mismatches[j].stages
 	})
-
-	best := candidates[0].entry
-	result := &MatchResult{
-		Name: best.resolvedName(),
-		Coat: best.coat,
+	if len(mismatches) > maxNearMisses {
+		mismatches = mismatches[:maxNearMisses]
 	}
-
-	if len(best.coat.Responses) > 0 {
-		best.seqMu.Lock()
-		defer best.seqMu.Unlock()
-
-		idx := best.seqCounter
-		seq := best.coat.Sequence
-		if seq == "" {
-			seq = "cycle"
-		}
-
-		if seq == "once" && idx >= len(best.coat.Responses) {
-			result.ResponseIdx = -1
-			result.Exhausted = true
-			return result, nil
-		}
-
-		if seq == "cycle" {
-			idx = idx % len(best.coat.Responses)
-		}
-
-		best.seqCounter++
-		result.ResponseIdx = idx
-	} else {
-		result.ResponseIdx = -1
-	}
-
-	return result, nil
+	return nil, mismatches
 }
 
 func diagnoseHeaderMismatch(e *entry, reqHeaders http.Header) string {

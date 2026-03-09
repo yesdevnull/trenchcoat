@@ -195,6 +195,12 @@ func (s *Server) Start(t testing.TB) {
 	}
 
 	if useTLS {
+		// Eagerly validate the cert/key pair so the test fails immediately
+		// with a clear message rather than silently failing during handshake.
+		if _, err := tls.LoadX509KeyPair(s.tlsCertFile, s.tlsKeyFile); err != nil {
+			t.Fatalf("trenchcoat: invalid TLS cert/key pair: %v", err)
+		}
+
 		addr, err := s.inner.StartTLS("127.0.0.1:0", s.tlsCertFile, s.tlsKeyFile)
 		if err != nil {
 			t.Fatalf("trenchcoat: failed to start TLS server: %v", err)
