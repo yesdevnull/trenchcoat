@@ -223,6 +223,11 @@ func validateResponse(mkErr func(string) *ValidationError, prefix string, r *Res
 	if r.DelayMs > MaxDelayMs {
 		errs = append(errs, mkErr(fmt.Sprintf("%s: 'delay_ms' must not exceed %d", prefix, MaxDelayMs)))
 	}
+	if r.DelayJitterMs < 0 {
+		errs = append(errs, mkErr(fmt.Sprintf("%s: 'delay_jitter_ms' must not be negative", prefix)))
+	} else if r.DelayMs+r.DelayJitterMs > MaxDelayMs {
+		errs = append(errs, mkErr(fmt.Sprintf("%s: combined 'delay_ms' and 'delay_jitter_ms' must not exceed %d", prefix, MaxDelayMs)))
+	}
 
 	return errs
 }

@@ -214,8 +214,8 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Determine if we should capture this request.
 	shouldCapture := p.shouldCapture(r.URL.Path)
 
-	// Read the request body. We need the full body for upstream forwarding,
-	// but only cap what we buffer for capture to prevent memory exhaustion.
+	// Read the request body with a hard limit to prevent memory exhaustion.
+	// Bodies exceeding maxBodySize are rejected with 413.
 	var reqBody []byte
 	if r.Body != nil {
 		var err error
