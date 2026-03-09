@@ -173,6 +173,11 @@ func (s *Server) Start(t testing.TB) {
 		t.Fatalf("trenchcoat: WithTLS requires both certFile and keyFile; got certFile=%q, keyFile=%q", s.tlsCertFile, s.tlsKeyFile)
 	}
 
+	// WithTLS and WithSelfSignedTLS are mutually exclusive.
+	if s.selfSigned && s.tlsCertFile != "" {
+		t.Fatalf("trenchcoat: WithTLS and WithSelfSignedTLS are mutually exclusive; use one or the other")
+	}
+
 	useTLS := s.tlsCertFile != "" || s.selfSigned
 
 	if s.selfSigned {

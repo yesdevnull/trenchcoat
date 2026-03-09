@@ -219,6 +219,53 @@ func TestServe_VerboseLogging_AmbiguousCoatOmitsFilePath(t *testing.T) {
 	}
 }
 
+func TestServe_VerboseLogging_DuplicateCoatsSameFileShowsPath(t *testing.T) {
+	// When multiple coats share the same name+method+URI but all originate
+	// from the same file, the file path should still be logged.
+	coats := []coat.LoadedCoat{
+		{
+			FilePath: "/fake/same.yaml",
+			Coat: coat.Coat{
+				Name:     "dupe",
+				Request:  coat.Request{Method: "GET", URI: "/same-file"},
+				Response: &coat.Response{Code: 200, Body: "a"},
+			},
+		},
+		{
+			FilePath: "/fake/same.yaml",
+			Coat: coat.Coat{
+				Name:     "dupe",
+				Request:  coat.Request{Method: "GET", URI: "/same-file"},
+				Response: &coat.Response{Code: 200, Body: "b"},
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	srv := server.New(coats, server.Config{
+		Verbose: true,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(srv.URL() + "/same-file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	assertEqual(t, "status", 200, resp.StatusCode)
+
+	logOutput := logBuf.String()
+	// File path SHOULD appear because all matches are from the same file.
+	if !strings.Contains(logOutput, "file=") {
+		t.Errorf("expected 'file=' in log output for same-file duplicates, got:\n%s", logOutput)
+	}
+}
+
 func TestServe_EmptyBody(t *testing.T) {
 	coats := []coat.LoadedCoat{
 		{
