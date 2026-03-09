@@ -212,8 +212,11 @@ func validateResponse(mkErr func(string) *ValidationError, prefix string, r *Res
 			errs = append(errs, mkErr(fmt.Sprintf("%s: 'body_file' must not be an absolute path", prefix)))
 		}
 		cleaned := filepath.Clean(r.BodyFile)
-		if strings.Contains(cleaned, "..") {
-			errs = append(errs, mkErr(fmt.Sprintf("%s: 'body_file' must not contain '..' path components", prefix)))
+		for _, comp := range strings.Split(cleaned, string(filepath.Separator)) {
+			if comp == ".." {
+				errs = append(errs, mkErr(fmt.Sprintf("%s: 'body_file' must not contain '..' path components", prefix)))
+				break
+			}
 		}
 	}
 
