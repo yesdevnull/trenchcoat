@@ -10,6 +10,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/yesdevnull/trenchcoat/internal/coat"
 	"github.com/yesdevnull/trenchcoat/internal/server"
 )
@@ -35,15 +36,28 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
-	coatPaths, _ := cmd.Flags().GetStringSlice("coats")
-	port, _ := cmd.Flags().GetInt("port")
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	watch, _ := cmd.Flags().GetBool("watch")
-	logFormat, _ := cmd.Flags().GetString("log-format")
-	tlsCert, _ := cmd.Flags().GetString("tls-cert")
-	tlsKey, _ := cmd.Flags().GetString("tls-key")
+	// Bind flags to viper so config file values serve as defaults.
+	if err := viper.BindPFlags(cmd.Flags()); err != nil {
+		return fmt.Errorf("binding flags: %w", err)
+	}
 
-	logger := newLogger(logFormat)
+	coatPaths := viper.GetStringSlice("coats")
+	port := viper.GetInt("port")
+	verbose := viper.GetBool("verbose")
+	watch := viper.GetBool("watch")
+	logFormat := viper.GetString("log-format")
+	tlsCert := viper.GetString("tls-cert")
+	tlsKey := viper.GetString("tls-key")
+
+	logger, err := newLogger(logFormat)
+	if err != nil {
+		return err
+	}
+
+	// Validate port range.
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 0 and 65535", port)
+	}
 
 	// Validate TLS flags.
 	if (tlsCert != "" && tlsKey == "") || (tlsCert == "" && tlsKey != "") {
@@ -162,13 +176,15 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 	}
 }
 
-func newLogger(format string) *slog.Logger {
+func newLogger(format string) (*slog.Logger, error) {
 	var handler slog.Handler
 	switch format {
+	case "text":
+		handler = slog.NewTextHandler(os.Stderr, nil)
 	case "json":
 		handler = slog.NewJSONHandler(os.Stderr, nil)
 	default:
-		handler = slog.NewTextHandler(os.Stderr, nil)
+		return nil, fmt.Errorf("invalid --log-format value %q: must be text or json", format)
 	}
-	return slog.New(handler)
+	return slog.New(handler), nil
 }

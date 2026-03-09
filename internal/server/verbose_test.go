@@ -476,6 +476,6 @@ func TestServe_BodyFile_AbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	assertEqual(t, "status", 200, resp.StatusCode)
-	assertEqual(t, "body", `{"abs": true}`, readBody(t, resp))
+	// Absolute body_file paths are rejected for security (path traversal prevention).
+	assertEqual(t, "status", 500, resp.StatusCode)
 }

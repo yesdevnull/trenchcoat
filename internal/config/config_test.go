@@ -33,12 +33,8 @@ func TestLoad_ExplicitPath(t *testing.T) {
 func TestLoad_NoConfigFile(t *testing.T) {
 	viper.Reset()
 	// Change to a temp dir with no config file.
-	origDir, _ := os.Getwd()
 	dir := t.TempDir()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	t.Chdir(dir)
 
 	err := config.Load("")
 	if err != nil {
@@ -54,11 +50,7 @@ func TestLoad_CwdConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	t.Chdir(dir)
 
 	err := config.Load("")
 	if err != nil {
@@ -92,11 +84,7 @@ func TestLoad_CwdConfig_YmlExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	origDir, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	t.Chdir(dir)
 
 	err := config.Load("")
 	if err != nil {

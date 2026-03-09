@@ -137,9 +137,9 @@ coats:
 	if !strings.Contains(errs[0].Error(), "request.uri is required") {
 		t.Fatalf("expected uri required error, got: %v", errs[0])
 	}
-	// The coat should still be loaded (validation errors are separate).
-	if len(loaded) != 1 {
-		t.Fatalf("expected 1 coat loaded despite errors, got %d", len(loaded))
+	// Invalid coats should be filtered out.
+	if len(loaded) != 0 {
+		t.Fatalf("expected 0 coats (invalid coats filtered out), got %d", len(loaded))
 	}
 }
 

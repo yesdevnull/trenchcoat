@@ -71,7 +71,11 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 	}
 
 	s.httpServer = &http.Server{
-		Handler: http.HandlerFunc(s.handleRequest),
+		Handler:           http.HandlerFunc(s.handleRequest),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
 	}
 
 	return s
@@ -233,12 +237,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if resp.BodyFile != "" {
 		bodyBytes, err := resolveBodyFile(resp.BodyFile, result.Coat, allCoats)
 		if err != nil {
-			s.logger.Error("body_file not found", "path", resp.BodyFile, "error", err)
+			s.logger.Error("body_file resolution failed", "path", resp.BodyFile, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"error": "body_file not found",
-				"path":  resp.BodyFile,
 			})
 			s.logRequest(r, result.Name, http.StatusInternalServerError, start)
 			return
@@ -249,14 +252,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Render response body templates.
 	body = renderTemplate(body, r)
 
-	// Apply delay with optional jitter.
+	// Apply delay with optional jitter (context-aware so it cancels if the client disconnects).
 	if resp.DelayMs > 0 || resp.DelayJitterMs > 0 {
 		delay := resp.DelayMs
 		if resp.DelayJitterMs > 0 {
 			delay += rand.IntN(resp.DelayJitterMs)
 		}
 		if delay > 0 {
-			time.Sleep(time.Duration(delay) * time.Millisecond)
+			select {
+			case <-time.After(time.Duration(delay) * time.Millisecond):
+			case <-r.Context().Done():
+				return
+			}
 		}
 	}
 
@@ -553,12 +560,50 @@ func resolveBodyFile(bodyFile string, c coat.Coat, allCoats []coat.LoadedCoat) (
 		}
 	}
 
-	var resolved string
-	if coatFilePath != "" && !filepath.IsAbs(bodyFile) {
-		resolved = filepath.Join(filepath.Dir(coatFilePath), bodyFile)
+	// Reject absolute paths — body_file must always be relative.
+	if filepath.IsAbs(bodyFile) {
+		return nil, fmt.Errorf("body_file must be a relative path, got absolute path")
+	}
+
+	var baseDir string
+	if coatFilePath != "" {
+		baseDir = filepath.Dir(coatFilePath)
 	} else {
-		resolved = bodyFile
+		// Programmatic API: no coat file path, resolve relative to cwd.
+		var err error
+		baseDir, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("unable to determine working directory: %w", err)
+		}
+	}
+
+	resolved := filepath.Join(baseDir, bodyFile)
+	resolved = filepath.Clean(resolved)
+
+	// Ensure the resolved path stays within the base directory.
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve base directory: %w", err)
+	}
+	absResolved, err := filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve body_file path: %w", err)
+	}
+
+	// The resolved path must be within (or equal to) the base directory.
+	if !isSubPath(absBase, absResolved) {
+		return nil, fmt.Errorf("body_file path escapes the coat file directory")
 	}
 
 	return os.ReadFile(resolved)
+}
+
+// isSubPath reports whether child is within or equal to parent.
+// Both paths must be absolute and clean.
+func isSubPath(parent, child string) bool {
+	if parent == child {
+		return true
+	}
+	prefix := parent + string(filepath.Separator)
+	return strings.HasPrefix(child, prefix)
 }

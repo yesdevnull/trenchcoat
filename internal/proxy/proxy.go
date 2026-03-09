@@ -30,6 +30,21 @@ import (
 // sanitiseRe matches characters that are not filename-safe.
 var sanitiseRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
+// maxBodySize is the maximum number of bytes read from request or response bodies.
+const maxBodySize = 10 << 20 // 10 MiB
+
+// hopByHopHeaders are headers that must not be forwarded by proxies.
+var hopByHopHeaders = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Proxy-Authorization": {},
+	"Proxy-Authenticate":  {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
 // Config holds proxy configuration.
 type Config struct {
 	UpstreamURL       string
@@ -140,11 +155,17 @@ func New(cfg Config) (*Proxy, error) {
 // Start begins the proxy server.
 func (p *Proxy) Start(addr string) (string, error) {
 	// Ensure write directory exists.
-	if err := os.MkdirAll(p.config.WriteDir, 0755); err != nil {
+	if err := os.MkdirAll(p.config.WriteDir, 0700); err != nil {
 		return "", fmt.Errorf("creating write directory %s: %w", p.config.WriteDir, err)
 	}
 
-	p.httpServer = &http.Server{Handler: http.HandlerFunc(p.handleRequest)}
+	p.httpServer = &http.Server{
+		Handler:           http.HandlerFunc(p.handleRequest),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 
 	ln, err := net.Listen("tcp4", addr)
 	if err != nil {
@@ -196,7 +217,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Read and buffer the request body.
 	var reqBody []byte
 	if r.Body != nil {
-		reqBody, _ = io.ReadAll(r.Body)
+		var err error
+		reqBody, err = io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+		if err != nil {
+			p.logger.Warn("failed to read request body", "error", err)
+		}
 		_ = r.Body.Close()
 	}
 
@@ -212,8 +237,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Copy headers.
+	// Copy headers, filtering hop-by-hop headers.
 	for k, vv := range r.Header {
+		if isHopByHopHeader(k) {
+			continue
+		}
 		for _, v := range vv {
 			proxyReq.Header.Add(k, v)
 		}
@@ -228,15 +256,18 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = upstreamResp.Body.Close() }()
 
 	// Read upstream response body.
-	respBody, err := io.ReadAll(upstreamResp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(upstreamResp.Body, maxBodySize))
 	if err != nil {
 		p.logger.Error("failed to read upstream response", "error", err)
 		http.Error(w, "proxy read error", http.StatusBadGateway)
 		return
 	}
 
-	// Relay response to client.
+	// Relay response to client, filtering hop-by-hop headers.
 	for k, vv := range upstreamResp.Header {
+		if isHopByHopHeader(k) {
+			continue
+		}
 		for _, v := range vv {
 			w.Header().Add(k, v)
 		}
@@ -283,7 +314,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 		if err != nil {
 			p.logger.Error("failed to decompress gzip response for capture", "error", err)
 		} else {
-			plain, err := io.ReadAll(gr)
+			plain, err := io.ReadAll(io.LimitReader(gr, maxBodySize))
 			_ = gr.Close()
 			if err != nil {
 				p.logger.Error("failed to read decompressed response for capture", "error", err)
@@ -378,7 +409,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	}
 
 	fullPath := filepath.Join(p.config.WriteDir, filename)
-	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+	if err := os.WriteFile(fullPath, data, 0600); err != nil {
 		p.logger.Error("failed to write coat file", "path", fullPath, "error", err)
 	} else if p.config.Verbose {
 		p.logger.Info("captured coat file", "path", fullPath)
@@ -460,6 +491,13 @@ func (p *Proxy) isStrippedHeader(header string) bool {
 		}
 	}
 	return false
+}
+
+// isHopByHopHeader returns true if the header is a hop-by-hop header that
+// should not be forwarded by proxies.
+func isHopByHopHeader(h string) bool {
+	_, ok := hopByHopHeaders[http.CanonicalHeaderKey(h)]
+	return ok
 }
 
 // isEncodingHeader returns true for headers that should be stripped from
