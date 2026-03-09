@@ -478,4 +478,11 @@ func TestServe_BodyFile_AbsolutePath(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	// Absolute body_file paths are rejected for security (path traversal prevention).
 	assertEqual(t, "status", 500, resp.StatusCode)
+	body := readBody(t, resp)
+	if !strings.Contains(body, "body_file not found") {
+		t.Errorf("expected generic error message, got: %s", body)
+	}
+	if strings.Contains(body, absFile) {
+		t.Errorf("error response must not leak the absolute file path, got: %s", body)
+	}
 }
