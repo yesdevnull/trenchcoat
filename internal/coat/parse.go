@@ -46,17 +46,19 @@ func parseFileWith(path, format string, unmarshal func([]byte, any) error) (*Fil
 
 // substituteVars replaces ${VAR_NAME} and ${VAR_NAME:-default} patterns with
 // environment variable values. If a variable is unset and has no default, the
-// pattern is left unchanged.
+// pattern is left unchanged. The :- syntax uses shell semantics: the default
+// is used when the variable is unset OR empty.
 func substituteVars(data []byte) []byte {
 	return varPattern.ReplaceAllFunc(data, func(match []byte) []byte {
 		groups := varPattern.FindSubmatch(match)
 		name := string(groups[1])
 		val, ok := os.LookupEnv(name)
-		if ok {
+		hasDefault := len(groups) > 2 && groups[2] != nil
+		if ok && (!hasDefault || val != "") {
 			return []byte(val)
 		}
-		// Check if a default was provided (group 2).
-		if len(groups) > 2 && groups[2] != nil {
+		// Use the default when provided (shell :- semantics: unset or empty).
+		if hasDefault {
 			return groups[2]
 		}
 		// No env var set, no default — leave as-is.
