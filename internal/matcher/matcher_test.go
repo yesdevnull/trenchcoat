@@ -1044,6 +1044,61 @@ func TestMatch_BodyMatch_ExplicitExact(t *testing.T) {
 	}
 }
 
+// --- Body size limit ---
+
+func TestMatch_BodyExceedsMaxSize_NoMatch(t *testing.T) {
+	const maxBodyMatchSize = 1 << 20 // 1 MiB — mirrors the constant in matcher.go
+
+	coats := []coat.Coat{
+		{
+			Name: "body-match",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/upload",
+				Body:   coat.StringPtr("test"),
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	// A body larger than maxBodyMatchSize should NOT match because the matcher
+	// treats oversized bodies as a read error for body-constrained coats.
+	oversized := strings.Repeat("x", maxBodyMatchSize+1)
+	req := newRequestWithBody(t, "POST", "/upload", nil, oversized)
+	result := m.Match(req)
+	if result != nil {
+		t.Fatal("expected no match — body exceeds maxBodyMatchSize")
+	}
+}
+
+func TestMatch_BodyJustUnderMaxSize_Matches(t *testing.T) {
+	const maxBodyMatchSize = 1 << 20 // 1 MiB — mirrors the constant in matcher.go
+
+	// Build a body that is exactly maxBodyMatchSize bytes.
+	body := strings.Repeat("a", maxBodyMatchSize)
+
+	coats := []coat.Coat{
+		{
+			Name: "large-body",
+			Request: coat.Request{
+				Method: "POST",
+				URI:    "/upload",
+				Body:   coat.StringPtr(body),
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/upload", nil, body)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match — body is exactly maxBodyMatchSize and content matches")
+	}
+	assertEqual(t, "name", "large-body", result.Name)
+}
+
 // --- MatchVerbose diagnostics ---
 
 func TestMatchVerbose_MethodMismatch(t *testing.T) {

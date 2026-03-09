@@ -2,9 +2,13 @@ package coat
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
+
+// MaxDelayMs is the maximum allowed value for delay_ms (60 seconds).
+const MaxDelayMs = 60000
 
 // ValidationError represents a single validation error for a coat.
 type ValidationError struct {
@@ -106,6 +110,7 @@ func validateCoat(index int, c Coat) []*ValidationError {
 		if c.Response.Body != "" && c.Response.BodyFile != "" {
 			errs = append(errs, mkErr("response: 'body' and 'body_file' are mutually exclusive"))
 		}
+		errs = append(errs, validateResponse(mkErr, "response", c.Response)...)
 	}
 
 	// Validate body/body_file mutual exclusivity in plural responses.
@@ -114,6 +119,8 @@ func validateCoat(index int, c Coat) []*ValidationError {
 			if r.Body != "" && r.BodyFile != "" {
 				errs = append(errs, mkErr(fmt.Sprintf("responses[%d]: 'body' and 'body_file' are mutually exclusive", j)))
 			}
+			prefix := fmt.Sprintf("responses[%d]", j)
+			errs = append(errs, validateResponse(mkErr, prefix, &r)...)
 		}
 	}
 
@@ -195,4 +202,24 @@ func checkSimpleRegex(coats []Coat) []*ValidationWarning {
 	}
 
 	return warnings
+}
+
+func validateResponse(mkErr func(string) *ValidationError, prefix string, r *Response) []*ValidationError {
+	var errs []*ValidationError
+
+	if r.BodyFile != "" {
+		if filepath.IsAbs(r.BodyFile) {
+			errs = append(errs, mkErr(fmt.Sprintf("%s: 'body_file' must not be an absolute path", prefix)))
+		}
+		cleaned := filepath.Clean(r.BodyFile)
+		if strings.Contains(cleaned, "..") {
+			errs = append(errs, mkErr(fmt.Sprintf("%s: 'body_file' must not contain '..' path components", prefix)))
+		}
+	}
+
+	if r.DelayMs > MaxDelayMs {
+		errs = append(errs, mkErr(fmt.Sprintf("%s: 'delay_ms' must not exceed %d", prefix, MaxDelayMs)))
+	}
+
+	return errs
 }

@@ -97,7 +97,7 @@ func loadFile(path string) ([]LoadedCoat, []error, []string) {
 	result := ValidateWithWarnings(f)
 	var validationErrs []error
 	for _, e := range result.Errors {
-		validationErrs = append(validationErrs, fmt.Errorf("%s: %s", path, e.Error()))
+		validationErrs = append(validationErrs, fmt.Errorf("%s: %w", path, e))
 	}
 
 	var warnings []string
@@ -105,9 +105,18 @@ func loadFile(path string) ([]LoadedCoat, []error, []string) {
 		warnings = append(warnings, fmt.Sprintf("%s: %s", path, w.String()))
 	}
 
-	loaded := make([]LoadedCoat, len(f.Coats))
+	// Build a set of coat indices that have validation errors.
+	invalidIndices := make(map[int]bool)
+	for _, e := range result.Errors {
+		invalidIndices[e.CoatIndex] = true
+	}
+
+	// Only include coats that passed validation.
+	var loaded []LoadedCoat
 	for i, c := range f.Coats {
-		loaded[i] = LoadedCoat{Coat: c, FilePath: path}
+		if !invalidIndices[i] {
+			loaded = append(loaded, LoadedCoat{Coat: c, FilePath: path})
+		}
 	}
 	return loaded, validationErrs, warnings
 }

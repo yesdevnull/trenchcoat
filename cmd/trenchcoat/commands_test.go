@@ -143,7 +143,10 @@ func TestValidateCmd_NoArgs(t *testing.T) {
 // --- newLogger tests ---
 
 func TestNewLogger_Text(t *testing.T) {
-	logger := newLogger("text")
+	logger, err := newLogger("text")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
@@ -151,19 +154,24 @@ func TestNewLogger_Text(t *testing.T) {
 }
 
 func TestNewLogger_JSON(t *testing.T) {
-	logger := newLogger("json")
+	logger, err := newLogger("json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
 	logger.Info("test message")
 }
 
-func TestNewLogger_Default(t *testing.T) {
-	logger := newLogger("unknown")
-	if logger == nil {
-		t.Fatal("expected non-nil logger for unknown format (should default to text)")
+func TestNewLogger_InvalidFormat(t *testing.T) {
+	_, err := newLogger("unknown")
+	if err == nil {
+		t.Fatal("expected error for unknown log format")
 	}
-	logger.Info("test message")
+	if !strings.Contains(err.Error(), "invalid --log-format value") {
+		t.Fatalf("expected log-format validation error, got: %v", err)
+	}
 }
 
 // --- serve command tests ---

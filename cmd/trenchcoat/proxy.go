@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/yesdevnull/trenchcoat/internal/proxy"
 )
 
@@ -35,13 +36,18 @@ func newProxyCmd() *cobra.Command {
 }
 
 func runProxy(cmd *cobra.Command, args []string) error {
+	// Bind flags to viper so config file values serve as defaults.
+	if err := viper.BindPFlags(cmd.Flags()); err != nil {
+		return fmt.Errorf("binding flags: %w", err)
+	}
+
 	upstreamURL := args[0]
-	port, _ := cmd.Flags().GetInt("port")
-	writeDir, _ := cmd.Flags().GetString("write-dir")
-	filter, _ := cmd.Flags().GetString("filter")
-	stripHeaders, _ := cmd.Flags().GetStringSlice("strip-headers")
-	noHeaders, _ := cmd.Flags().GetBool("no-headers")
-	dedupe, _ := cmd.Flags().GetString("dedupe")
+	port := viper.GetInt("port")
+	writeDir := viper.GetString("write-dir")
+	filter := viper.GetString("filter")
+	stripHeaders := viper.GetStringSlice("strip-headers")
+	noHeaders := viper.GetBool("no-headers")
+	dedupe := viper.GetString("dedupe")
 
 	// --no-headers and --strip-headers are mutually exclusive.
 	if noHeaders && cmd.Flags().Changed("strip-headers") {
@@ -51,14 +57,22 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	if noHeaders {
 		stripHeaders = nil
 	}
-	captureBody, _ := cmd.Flags().GetBool("capture-body")
-	prettyJSON, _ := cmd.Flags().GetBool("pretty-json")
-	bodyFileThreshold, _ := cmd.Flags().GetInt("body-file-threshold")
-	nameTemplate, _ := cmd.Flags().GetString("name-template")
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	logFormat, _ := cmd.Flags().GetString("log-format")
+	captureBody := viper.GetBool("capture-body")
+	prettyJSON := viper.GetBool("pretty-json")
+	bodyFileThreshold := viper.GetInt("body-file-threshold")
+	nameTemplate := viper.GetString("name-template")
+	verbose := viper.GetBool("verbose")
+	logFormat := viper.GetString("log-format")
 
-	logger := newLogger(logFormat)
+	logger, err := newLogger(logFormat)
+	if err != nil {
+		return err
+	}
+
+	// Validate port range.
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 0 and 65535", port)
+	}
 
 	// Validate dedupe value.
 	switch dedupe {
