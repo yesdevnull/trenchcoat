@@ -214,15 +214,22 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Determine if we should capture this request.
 	shouldCapture := p.shouldCapture(r.URL.Path)
 
-	// Read and buffer the request body.
+	// Read the request body. We need the full body for upstream forwarding,
+	// but only cap what we buffer for capture to prevent memory exhaustion.
 	var reqBody []byte
 	if r.Body != nil {
 		var err error
-		reqBody, err = io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+		reqBody, err = io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
+		_ = r.Body.Close()
 		if err != nil {
 			p.logger.Warn("failed to read request body", "error", err)
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
 		}
-		_ = r.Body.Close()
+		if len(reqBody) > maxBodySize {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 	}
 
 	// Forward request to upstream.
@@ -255,11 +262,16 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = upstreamResp.Body.Close() }()
 
-	// Read upstream response body.
-	respBody, err := io.ReadAll(io.LimitReader(upstreamResp.Body, maxBodySize))
+	// Read upstream response body with size limit.
+	respBody, err := io.ReadAll(io.LimitReader(upstreamResp.Body, maxBodySize+1))
 	if err != nil {
 		p.logger.Error("failed to read upstream response", "error", err)
 		http.Error(w, "proxy read error", http.StatusBadGateway)
+		return
+	}
+	if len(respBody) > maxBodySize {
+		p.logger.Error("upstream response body too large", "size", len(respBody))
+		http.Error(w, "upstream response too large", http.StatusBadGateway)
 		return
 	}
 

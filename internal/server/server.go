@@ -74,8 +74,8 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 		Handler:           http.HandlerFunc(s.handleRequest),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1 MiB
+		WriteTimeout:      time.Duration(coat.MaxDelayMs+coat.MaxDelayMs+30000) * time.Millisecond, // delay + jitter + 30s buffer
+		MaxHeaderBytes:    1 << 20,                                                                 // 1 MiB
 	}
 
 	return s
@@ -259,9 +259,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			delay += rand.IntN(resp.DelayJitterMs)
 		}
 		if delay > 0 {
+			timer := time.NewTimer(time.Duration(delay) * time.Millisecond)
 			select {
-			case <-time.After(time.Duration(delay) * time.Millisecond):
+			case <-timer.C:
 			case <-r.Context().Done():
+				timer.Stop()
 				return
 			}
 		}
@@ -611,9 +613,10 @@ func resolveBodyFile(bodyFile string, c coat.Coat, allCoats []coat.LoadedCoat) (
 // isSubPath reports whether child is within or equal to parent.
 // Both paths must be absolute and clean.
 func isSubPath(parent, child string) bool {
-	if parent == child {
-		return true
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
 	}
-	prefix := parent + string(filepath.Separator)
-	return strings.HasPrefix(child, prefix)
+	// The relative path must not start with ".." to be a subpath.
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }

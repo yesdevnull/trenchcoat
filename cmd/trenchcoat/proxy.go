@@ -50,7 +50,8 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	dedupe := viper.GetString("dedupe")
 
 	// --no-headers and --strip-headers are mutually exclusive.
-	if noHeaders && cmd.Flags().Changed("strip-headers") {
+	// Check both CLI flag changes and viper config-file settings.
+	if noHeaders && (cmd.Flags().Changed("strip-headers") || viper.IsSet("strip-headers")) {
 		return fmt.Errorf("--no-headers and --strip-headers are mutually exclusive")
 	}
 	// When --no-headers is set, clear strip-headers so they don't leak into Config.
