@@ -266,6 +266,53 @@ func TestServe_VerboseLogging_DuplicateCoatsSameFileShowsPath(t *testing.T) {
 	}
 }
 
+func TestServe_VerboseLogging_MethodNormalization(t *testing.T) {
+	// A coat with omitted method (defaults to GET) should match for file path
+	// lookup against the same coat with explicit "GET", since the matcher
+	// normalizes empty to GET.
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "method-norm.yaml")
+	if err := os.WriteFile(coatFile, []byte(`coats:
+  - name: default-method
+    request:
+      uri: /norm-test
+    response:
+      code: 200
+      body: "ok"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, errs := coat.LoadPaths([]string{coatFile})
+	if len(errs) > 0 {
+		t.Fatalf("load errors: %v", errs)
+	}
+
+	var logBuf bytes.Buffer
+	srv := server.New(loaded, server.Config{
+		Verbose: true,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	_, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(srv.URL() + "/norm-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	assertEqual(t, "status", 200, resp.StatusCode)
+
+	logOutput := logBuf.String()
+	// File path should appear despite method being empty (normalized to GET).
+	if !strings.Contains(logOutput, "file=") {
+		t.Errorf("expected 'file=' in log output for coat with omitted method, got:\n%s", logOutput)
+	}
+}
+
 func TestServe_EmptyBody(t *testing.T) {
 	coats := []coat.LoadedCoat{
 		{

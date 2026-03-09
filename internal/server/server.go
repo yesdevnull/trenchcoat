@@ -191,10 +191,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		var firstPath string
 		hasMatch := false
 		ambiguous := false
+		resultMethod := normalizeMethod(result.Coat.Request.Method)
 		for _, lc := range allCoats {
 			if lc.Coat.Name == result.Coat.Name &&
 				lc.Coat.Request.URI == result.Coat.Request.URI &&
-				lc.Coat.Request.Method == result.Coat.Request.Method {
+				normalizeMethod(lc.Coat.Request.Method) == resultMethod {
 				if !hasMatch {
 					firstPath = lc.FilePath
 					hasMatch = true
@@ -441,6 +442,16 @@ func (s *Server) Calls(name string) []CapturedRequest {
 	return out
 }
 
+// normalizeMethod returns the effective HTTP method, applying the same rules
+// as the matcher: uppercase, default to GET when empty.
+func normalizeMethod(method string) string {
+	m := strings.ToUpper(method)
+	if m == "" {
+		return "GET"
+	}
+	return m
+}
+
 // ResetCalls clears all recorded call data.
 func (s *Server) ResetCalls() {
 	s.callsMu.Lock()
@@ -529,10 +540,11 @@ func renderTemplate(body string, r *http.Request) string {
 func resolveBodyFile(bodyFile string, c coat.Coat, allCoats []coat.LoadedCoat) ([]byte, error) {
 	// Find the file path for this coat, detecting ambiguous matches.
 	var coatFilePath string
+	cMethod := normalizeMethod(c.Request.Method)
 	for _, lc := range allCoats {
 		if lc.Coat.Name == c.Name &&
 			lc.Coat.Request.URI == c.Request.URI &&
-			lc.Coat.Request.Method == c.Request.Method {
+			normalizeMethod(lc.Coat.Request.Method) == cMethod {
 			if coatFilePath == "" {
 				coatFilePath = lc.FilePath
 			} else if lc.FilePath != coatFilePath {
