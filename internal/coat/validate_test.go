@@ -269,6 +269,58 @@ func TestSubstituteVars_UnsetNoDefault_LeftAsIs(t *testing.T) {
 	}
 }
 
+func TestSubstituteVars_EmptyVarUsesDefault(t *testing.T) {
+	// Shell :- semantics: default is used when variable is set but empty.
+	t.Setenv("TRENCHCOAT_EMPTY_VAR", "")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.yaml")
+	content := `coats:
+  - name: empty-default
+    request:
+      uri: "${TRENCHCOAT_EMPTY_VAR:-/fallback}/users"
+    response:
+      code: 200
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if f.Coats[0].Request.URI != "/fallback/users" {
+		t.Errorf("expected URI '/fallback/users' (empty var should use default), got %q", f.Coats[0].Request.URI)
+	}
+}
+
+func TestSubstituteVars_EmptyVarWithoutDefault(t *testing.T) {
+	// Without :- syntax, an empty variable should still resolve to empty.
+	t.Setenv("TRENCHCOAT_EMPTY_VAR2", "")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty-nodefault.yaml")
+	content := `coats:
+  - name: empty-nodefault
+    request:
+      uri: "/api${TRENCHCOAT_EMPTY_VAR2}/users"
+    response:
+      code: 200
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if f.Coats[0].Request.URI != "/api/users" {
+		t.Errorf("expected URI '/api/users' (empty var without default), got %q", f.Coats[0].Request.URI)
+	}
+}
+
 func TestSubstituteVars_JSON(t *testing.T) {
 	t.Setenv("TRENCHCOAT_JSON_PORT", "9090")
 
