@@ -392,26 +392,25 @@ func (s *Server) recordCall(name string, r *http.Request) {
 	}
 
 	// Read body for recording with a size limit to prevent DoS.
-	// The full body is restored for downstream use.
+	// The full body is restored for downstream use via MultiReader.
 	if r.Body != nil {
-		limited := io.LimitReader(r.Body, maxRecordBodySize+1)
+		origBody := r.Body
+		limited := io.LimitReader(origBody, maxRecordBodySize+1)
 		headBytes, err := io.ReadAll(limited)
-		if err == nil && len(headBytes) > maxRecordBodySize {
-			cr.Body = string(headBytes[:maxRecordBodySize]) + "...(truncated)"
-			// Restore full body: head bytes + remaining unread body.
-			r.Body = struct {
-				io.Reader
-				io.Closer
-			}{
-				Reader: io.MultiReader(bytes.NewReader(headBytes), r.Body),
-				Closer: r.Body,
-			}
-		} else {
-			if err == nil {
+		if err == nil {
+			if len(headBytes) > maxRecordBodySize {
+				cr.Body = string(headBytes[:maxRecordBodySize]) + "...(truncated)"
+			} else {
 				cr.Body = string(headBytes)
 			}
-			_ = r.Body.Close()
-			r.Body = io.NopCloser(bytes.NewReader(headBytes))
+		}
+		// Reconstruct r.Body: captured bytes + remaining unread original body.
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: io.MultiReader(bytes.NewReader(headBytes), origBody),
+			Closer: origBody,
 		}
 	}
 
