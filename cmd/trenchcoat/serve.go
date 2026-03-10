@@ -174,12 +174,13 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) {
 				if coat.IsCoatFile(event.Name) {
+					changedFile := event.Name
 					// Reset the debounce timer on each qualifying event.
 					if debounceTimer != nil {
 						debounceTimer.Stop()
 					}
 					debounceTimer = time.AfterFunc(debounceDelay, func() {
-						logger.Info("coat file changed, reloading", "file", event.Name)
+						logger.Info("coat file changed, reloading", "file", changedFile)
 						reloadResult := coat.LoadPathsWithWarnings(coatPaths)
 						for _, w := range reloadResult.Warnings {
 							logger.Warn("coat validation warning", "warning", w)
