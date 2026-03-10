@@ -54,8 +54,14 @@ func substituteVars(data []byte) []byte {
 		name := string(groups[1])
 		val, ok := os.LookupEnv(name)
 		hasDefault := len(groups) > 2 && groups[2] != nil
-		if ok && (!hasDefault || val != "") {
-			return []byte(val)
+
+		// Shell :- semantics: use the env value if the variable is set.
+		// With :- syntax, an empty value falls through to the default.
+		// Without :- syntax, an empty value is returned as-is.
+		if ok {
+			if !hasDefault || val != "" {
+				return []byte(val)
+			}
 		}
 		// Use the default when provided (shell :- semantics: unset or empty).
 		if hasDefault {

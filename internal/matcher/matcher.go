@@ -142,25 +142,15 @@ func New(coats []coat.Coat) *Matcher {
 	return &Matcher{entries: entries}
 }
 
-// Match finds the best matching coat for an incoming request.
-// Returns nil if no coat matches.
-//
-// If a candidate coat that passed method/URI/header/query checks specifies a
-// request body, the request body is read and buffered lazily. The request body
-// is replaced with a new reader so it remains available.
-func (m *Matcher) Match(req *http.Request) *MatchResult {
-	type candidate struct {
-		entry *entry
-		score matchScore
-	}
-
-	// Lazily read the request body only if needed for body matching.
-	// Bounded to maxBodyMatchSize to avoid unbounded memory allocation.
-	var reqBody []byte
+// lazyBodyReader creates a function that lazily reads the request body on first
+// call, bounded to maxBodyMatchSize. The request body is reconstituted so
+// downstream handlers still see the full body.
+func lazyBodyReader(req *http.Request) func() (string, bool) {
 	var reqBodyStr string
 	var bodyRead bool
 	var bodyReadErr bool
-	getBody := func() (string, bool) {
+
+	return func() (string, bool) {
 		if bodyRead {
 			return reqBodyStr, bodyReadErr
 		}
@@ -177,6 +167,7 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 
 			// If we read more than maxBodyMatchSize bytes, treat it as too large
 			// for body matching, but still restore the full body for downstream use.
+			var reqBody []byte
 			if len(allRead) > maxBodyMatchSize {
 				bodyReadErr = true
 				reqBody = allRead[:maxBodyMatchSize]
@@ -200,9 +191,44 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 		}
 		return reqBodyStr, bodyReadErr
 	}
+}
 
+// resolveSequence advances the sequence counter for an entry and returns
+// the response index and whether the sequence is exhausted.
+func resolveSequence(best *entry) (idx int, exhausted bool) {
+	if len(best.coat.Responses) == 0 {
+		return -1, false
+	}
+
+	best.seqMu.Lock()
+	defer best.seqMu.Unlock()
+
+	idx = best.seqCounter
+	seq := best.coat.Sequence
+	if seq == "" {
+		seq = "cycle"
+	}
+
+	if seq == "once" && idx >= len(best.coat.Responses) {
+		return -1, true
+	}
+
+	if seq == "cycle" {
+		idx = idx % len(best.coat.Responses)
+	}
+
+	best.seqCounter++
+	return idx, false
+}
+
+type candidate struct {
+	entry *entry
+	score matchScore
+}
+
+// findCandidates evaluates all entries against the request and returns matching candidates.
+func (m *Matcher) findCandidates(req *http.Request, getBody func() (string, bool)) []candidate {
 	var candidates []candidate
-
 	for _, e := range m.entries {
 		if !matchesMethod(e, req.Method) {
 			continue
@@ -225,12 +251,11 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 			score: computeScore(e),
 		})
 	}
+	return candidates
+}
 
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	// Sort by score descending (best match first).
+// selectBest sorts candidates and resolves the best match including sequence state.
+func selectBest(candidates []candidate) *MatchResult {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].score.betterThan(candidates[j].score)
 	})
@@ -241,34 +266,25 @@ func (m *Matcher) Match(req *http.Request) *MatchResult {
 		Coat: best.coat,
 	}
 
-	// Handle sequence responses.
-	if len(best.coat.Responses) > 0 {
-		best.seqMu.Lock()
-		defer best.seqMu.Unlock()
-
-		idx := best.seqCounter
-		seq := best.coat.Sequence
-		if seq == "" {
-			seq = "cycle"
-		}
-
-		if seq == "once" && idx >= len(best.coat.Responses) {
-			result.ResponseIdx = -1
-			result.Exhausted = true
-			return result
-		}
-
-		if seq == "cycle" {
-			idx = idx % len(best.coat.Responses)
-		}
-
-		best.seqCounter++
-		result.ResponseIdx = idx
-	} else {
-		result.ResponseIdx = -1
-	}
-
+	idx, exhausted := resolveSequence(best)
+	result.ResponseIdx = idx
+	result.Exhausted = exhausted
 	return result
+}
+
+// Match finds the best matching coat for an incoming request.
+// Returns nil if no coat matches.
+//
+// If a candidate coat that passed method/URI/header/query checks specifies a
+// request body, the request body is read and buffered lazily. The request body
+// is replaced with a new reader so it remains available.
+func (m *Matcher) Match(req *http.Request) *MatchResult {
+	getBody := lazyBodyReader(req)
+	candidates := m.findCandidates(req, getBody)
+	if len(candidates) == 0 {
+		return nil
+	}
+	return selectBest(candidates)
 }
 
 // ResetSequences resets all sequence counters (e.g. on hot reload).
@@ -296,109 +312,14 @@ const maxNearMisses = 5
 // Uses a two-pass approach: the first pass finds candidates (no allocations for
 // mismatches), and a second pass collects near-miss diagnostics only when needed.
 func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
-	type candidate struct {
-		entry *entry
-		score matchScore
-	}
-
-	var reqBody []byte
-	var reqBodyStr string
-	var bodyRead bool
-	var bodyReadErr bool
-	getBody := func() (string, bool) {
-		if bodyRead {
-			return reqBodyStr, bodyReadErr
-		}
-		bodyRead = true
-		if req.Body != nil {
-			origBody := req.Body
-			limited := io.LimitReader(origBody, maxBodyMatchSize+1)
-			allRead, err := io.ReadAll(limited)
-			if err != nil {
-				bodyReadErr = true
-			}
-			if len(allRead) > maxBodyMatchSize {
-				bodyReadErr = true
-				reqBody = allRead[:maxBodyMatchSize]
-			} else {
-				reqBody = allRead
-			}
-			reqBodyStr = string(reqBody)
-			req.Body = struct {
-				io.Reader
-				io.Closer
-			}{
-				Reader: io.MultiReader(bytes.NewReader(allRead), origBody),
-				Closer: origBody,
-			}
-		}
-		return reqBodyStr, bodyReadErr
-	}
+	getBody := lazyBodyReader(req)
 
 	// First pass: find candidates only (no mismatch allocation).
-	var candidates []candidate
-	for _, e := range m.entries {
-		if !matchesMethod(e, req.Method) {
-			continue
-		}
-		if !matchesURI(e, req.URL.Path) {
-			continue
-		}
-		if !matchesHeaders(e, req.Header) {
-			continue
-		}
-		if !matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
-			continue
-		}
-		if !matchesBody(e, getBody) {
-			continue
-		}
-
-		candidates = append(candidates, candidate{
-			entry: e,
-			score: computeScore(e),
-		})
-	}
+	candidates := m.findCandidates(req, getBody)
 
 	// If we found candidates, return the best match without collecting mismatches.
 	if len(candidates) > 0 {
-		sort.SliceStable(candidates, func(i, j int) bool {
-			return candidates[i].score.betterThan(candidates[j].score)
-		})
-
-		best := candidates[0].entry
-		result := &MatchResult{
-			Name: best.resolvedName(),
-			Coat: best.coat,
-		}
-
-		if len(best.coat.Responses) > 0 {
-			best.seqMu.Lock()
-			defer best.seqMu.Unlock()
-
-			idx := best.seqCounter
-			seq := best.coat.Sequence
-			if seq == "" {
-				seq = "cycle"
-			}
-
-			if seq == "once" && idx >= len(best.coat.Responses) {
-				result.ResponseIdx = -1
-				result.Exhausted = true
-				return result, nil
-			}
-
-			if seq == "cycle" {
-				idx = idx % len(best.coat.Responses)
-			}
-
-			best.seqCounter++
-			result.ResponseIdx = idx
-		} else {
-			result.ResponseIdx = -1
-		}
-
-		return result, nil
+		return selectBest(candidates), nil
 	}
 
 	// Second pass: no candidates found, collect near-miss diagnostics.

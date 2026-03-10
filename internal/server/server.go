@@ -44,7 +44,7 @@ type Server struct {
 	matcher *matcher.Matcher
 	coats   []coat.LoadedCoat
 
-	callsMu sync.Mutex
+	callsMu sync.RWMutex
 	calls   map[string][]CapturedRequest
 }
 
@@ -74,8 +74,8 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 		Handler:           http.HandlerFunc(s.handleRequest),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      time.Duration(coat.MaxDelayMs+coat.MaxDelayMs+30000) * time.Millisecond, // delay + jitter + 30s buffer
-		MaxHeaderBytes:    1 << 20,                                                                 // 1 MiB
+		WriteTimeout:      time.Duration(coat.MaxDelayMs+30000) * time.Millisecond, // max delay (includes jitter) + 30s buffer
+		MaxHeaderBytes:    1 << 20,                                                 // 1 MiB
 	}
 
 	return s
@@ -431,15 +431,15 @@ func (s *Server) recordCall(name string, r *http.Request) {
 
 // CallCount returns the number of times the named coat was matched.
 func (s *Server) CallCount(name string) int {
-	s.callsMu.Lock()
-	defer s.callsMu.Unlock()
+	s.callsMu.RLock()
+	defer s.callsMu.RUnlock()
 	return len(s.calls[name])
 }
 
 // Calls returns all captured requests for the named coat.
 func (s *Server) Calls(name string) []CapturedRequest {
-	s.callsMu.Lock()
-	defer s.callsMu.Unlock()
+	s.callsMu.RLock()
+	defer s.callsMu.RUnlock()
 	reqs := s.calls[name]
 	out := make([]CapturedRequest, len(reqs))
 	for i, req := range reqs {

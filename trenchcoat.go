@@ -333,13 +333,16 @@ func (s *Server) Requests(name string) []CapturedRequest {
 	internal := s.inner.Calls(name)
 	out := make([]CapturedRequest, len(internal))
 	for i, cr := range internal {
-		out[i] = CapturedRequest{
+		captured := CapturedRequest{
 			Method:   cr.Method,
 			URI:      cr.URI,
 			RawQuery: cr.RawQuery,
-			Header:   cr.Header.Clone(),
 			Body:     cr.Body,
 		}
+		if cr.Header != nil {
+			captured.Header = cr.Header.Clone()
+		}
+		out[i] = captured
 	}
 	return out
 }

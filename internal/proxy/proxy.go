@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -24,6 +23,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
 )
 
@@ -309,7 +309,7 @@ func (p *Proxy) shouldCapture(urlPath string) bool {
 	if p.config.Filter == "" {
 		return true
 	}
-	matched, err := path.Match(p.config.Filter, urlPath)
+	matched, err := doublestar.Match(p.config.Filter, urlPath)
 	if err != nil {
 		p.logger.Error("invalid capture filter pattern", "filter", p.config.Filter, "error", err)
 		return false
@@ -485,7 +485,7 @@ func (p *Proxy) generateFilename(method, urlPath string, status int) string {
 		if counter == 0 {
 			return fmt.Sprintf("%s_%d.yaml", base, ts)
 		}
-		return fmt.Sprintf("%s_%d_%d.yaml", base, counter+1, ts)
+		return fmt.Sprintf("%s_%d_%d.yaml", base, counter, ts)
 
 	default: // overwrite
 		return fmt.Sprintf("%s.yaml", base)
