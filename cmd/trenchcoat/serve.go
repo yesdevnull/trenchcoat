@@ -36,18 +36,24 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
-	// Bind flags to viper so config file values serve as defaults.
-	if err := viper.BindPFlags(cmd.Flags()); err != nil {
-		return fmt.Errorf("binding flags: %w", err)
-	}
+	// Bind CLI flags to viper config keys so config file values serve as defaults.
+	// Flag names use hyphens, but config file keys use underscores/nesting.
+	flags := cmd.Flags()
+	_ = viper.BindPFlag("coats", flags.Lookup("coats"))
+	_ = viper.BindPFlag("port", flags.Lookup("port"))
+	_ = viper.BindPFlag("verbose", flags.Lookup("verbose"))
+	_ = viper.BindPFlag("watch", flags.Lookup("watch"))
+	_ = viper.BindPFlag("log_format", flags.Lookup("log-format"))
+	_ = viper.BindPFlag("tls.cert", flags.Lookup("tls-cert"))
+	_ = viper.BindPFlag("tls.key", flags.Lookup("tls-key"))
 
 	coatPaths := viper.GetStringSlice("coats")
 	port := viper.GetInt("port")
 	verbose := viper.GetBool("verbose")
 	watch := viper.GetBool("watch")
-	logFormat := viper.GetString("log-format")
-	tlsCert := viper.GetString("tls-cert")
-	tlsKey := viper.GetString("tls-key")
+	logFormat := viper.GetString("log_format")
+	tlsCert := viper.GetString("tls.cert")
+	tlsKey := viper.GetString("tls.key")
 
 	logger, err := newLogger(logFormat)
 	if err != nil {

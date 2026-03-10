@@ -36,34 +36,45 @@ func newProxyCmd() *cobra.Command {
 }
 
 func runProxy(cmd *cobra.Command, args []string) error {
-	// Bind flags to viper so config file values serve as defaults.
-	if err := viper.BindPFlags(cmd.Flags()); err != nil {
-		return fmt.Errorf("binding flags: %w", err)
-	}
+	// Bind CLI flags to viper config keys so config file values serve as defaults.
+	// Flag names use hyphens, but config file keys use underscores/nesting.
+	flags := cmd.Flags()
+	_ = viper.BindPFlag("port", flags.Lookup("port"))
+	_ = viper.BindPFlag("proxy.write_dir", flags.Lookup("write-dir"))
+	_ = viper.BindPFlag("proxy.filter", flags.Lookup("filter"))
+	_ = viper.BindPFlag("proxy.strip_headers", flags.Lookup("strip-headers"))
+	_ = viper.BindPFlag("proxy.no_headers", flags.Lookup("no-headers"))
+	_ = viper.BindPFlag("proxy.dedupe", flags.Lookup("dedupe"))
+	_ = viper.BindPFlag("proxy.capture_body", flags.Lookup("capture-body"))
+	_ = viper.BindPFlag("proxy.pretty_json", flags.Lookup("pretty-json"))
+	_ = viper.BindPFlag("proxy.body_file_threshold", flags.Lookup("body-file-threshold"))
+	_ = viper.BindPFlag("proxy.name_template", flags.Lookup("name-template"))
+	_ = viper.BindPFlag("verbose", flags.Lookup("verbose"))
+	_ = viper.BindPFlag("log_format", flags.Lookup("log-format"))
 
 	upstreamURL := args[0]
 	port := viper.GetInt("port")
-	writeDir := viper.GetString("write-dir")
-	filter := viper.GetString("filter")
-	stripHeaders := viper.GetStringSlice("strip-headers")
-	noHeaders := viper.GetBool("no-headers")
-	dedupe := viper.GetString("dedupe")
+	writeDir := viper.GetString("proxy.write_dir")
+	filter := viper.GetString("proxy.filter")
+	stripHeaders := viper.GetStringSlice("proxy.strip_headers")
+	noHeaders := viper.GetBool("proxy.no_headers")
+	dedupe := viper.GetString("proxy.dedupe")
 
 	// --no-headers and --strip-headers are mutually exclusive.
 	// Check both CLI flag changes and viper config-file settings.
-	if noHeaders && (cmd.Flags().Changed("strip-headers") || viper.IsSet("strip-headers")) {
+	if noHeaders && (cmd.Flags().Changed("strip-headers") || viper.IsSet("proxy.strip_headers")) {
 		return fmt.Errorf("--no-headers and --strip-headers are mutually exclusive")
 	}
 	// When --no-headers is set, clear strip-headers so they don't leak into Config.
 	if noHeaders {
 		stripHeaders = nil
 	}
-	captureBody := viper.GetBool("capture-body")
-	prettyJSON := viper.GetBool("pretty-json")
-	bodyFileThreshold := viper.GetInt("body-file-threshold")
-	nameTemplate := viper.GetString("name-template")
+	captureBody := viper.GetBool("proxy.capture_body")
+	prettyJSON := viper.GetBool("proxy.pretty_json")
+	bodyFileThreshold := viper.GetInt("proxy.body_file_threshold")
+	nameTemplate := viper.GetString("proxy.name_template")
 	verbose := viper.GetBool("verbose")
-	logFormat := viper.GetString("log-format")
+	logFormat := viper.GetString("log_format")
 
 	logger, err := newLogger(logFormat)
 	if err != nil {
