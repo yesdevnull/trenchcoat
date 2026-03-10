@@ -38,19 +38,24 @@ func newProxyCmd() *cobra.Command {
 func runProxy(cmd *cobra.Command, args []string) error {
 	// Bind CLI flags to viper config keys so config file values serve as defaults.
 	// Flag names use hyphens, but config file keys use underscores/nesting.
-	flags := cmd.Flags()
-	_ = viper.BindPFlag("port", flags.Lookup("port"))
-	_ = viper.BindPFlag("proxy.write_dir", flags.Lookup("write-dir"))
-	_ = viper.BindPFlag("proxy.filter", flags.Lookup("filter"))
-	_ = viper.BindPFlag("proxy.strip_headers", flags.Lookup("strip-headers"))
-	_ = viper.BindPFlag("proxy.no_headers", flags.Lookup("no-headers"))
-	_ = viper.BindPFlag("proxy.dedupe", flags.Lookup("dedupe"))
-	_ = viper.BindPFlag("proxy.capture_body", flags.Lookup("capture-body"))
-	_ = viper.BindPFlag("proxy.pretty_json", flags.Lookup("pretty-json"))
-	_ = viper.BindPFlag("proxy.body_file_threshold", flags.Lookup("body-file-threshold"))
-	_ = viper.BindPFlag("proxy.name_template", flags.Lookup("name-template"))
-	_ = viper.BindPFlag("verbose", flags.Lookup("verbose"))
-	_ = viper.BindPFlag("log_format", flags.Lookup("log-format"))
+	for _, b := range []struct{ key, flag string }{
+		{"port", "port"},
+		{"proxy.write_dir", "write-dir"},
+		{"proxy.filter", "filter"},
+		{"proxy.strip_headers", "strip-headers"},
+		{"proxy.no_headers", "no-headers"},
+		{"proxy.dedupe", "dedupe"},
+		{"proxy.capture_body", "capture-body"},
+		{"proxy.pretty_json", "pretty-json"},
+		{"proxy.body_file_threshold", "body-file-threshold"},
+		{"proxy.name_template", "name-template"},
+		{"verbose", "verbose"},
+		{"log_format", "log-format"},
+	} {
+		if err := viper.BindPFlag(b.key, cmd.Flags().Lookup(b.flag)); err != nil {
+			return fmt.Errorf("binding flag %q to config key %q: %w", b.flag, b.key, err)
+		}
+	}
 
 	upstreamURL := args[0]
 	port := viper.GetInt("port")
