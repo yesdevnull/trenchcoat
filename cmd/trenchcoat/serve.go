@@ -38,14 +38,19 @@ func newServeCmd() *cobra.Command {
 func runServe(cmd *cobra.Command, args []string) error {
 	// Bind CLI flags to viper config keys so config file values serve as defaults.
 	// Flag names use hyphens, but config file keys use underscores/nesting.
-	flags := cmd.Flags()
-	_ = viper.BindPFlag("coats", flags.Lookup("coats"))
-	_ = viper.BindPFlag("port", flags.Lookup("port"))
-	_ = viper.BindPFlag("verbose", flags.Lookup("verbose"))
-	_ = viper.BindPFlag("watch", flags.Lookup("watch"))
-	_ = viper.BindPFlag("log_format", flags.Lookup("log-format"))
-	_ = viper.BindPFlag("tls.cert", flags.Lookup("tls-cert"))
-	_ = viper.BindPFlag("tls.key", flags.Lookup("tls-key"))
+	for _, b := range []struct{ key, flag string }{
+		{"coats", "coats"},
+		{"port", "port"},
+		{"verbose", "verbose"},
+		{"watch", "watch"},
+		{"log_format", "log-format"},
+		{"tls.cert", "tls-cert"},
+		{"tls.key", "tls-key"},
+	} {
+		if err := viper.BindPFlag(b.key, cmd.Flags().Lookup(b.flag)); err != nil {
+			return fmt.Errorf("binding flag %q to config key %q: %w", b.flag, b.key, err)
+		}
+	}
 
 	coatPaths := viper.GetStringSlice("coats")
 	port := viper.GetInt("port")
