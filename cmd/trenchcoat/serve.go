@@ -157,9 +157,16 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 
 	logger.Info("watching coat files for changes")
 
+	// Debounce rapid file events (editors often trigger multiple events per save).
+	const debounceDelay = 100 * time.Millisecond
+	var debounceTimer *time.Timer
+
 	for {
 		select {
 		case <-ctx.Done():
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
 			return
 		case event, ok := <-watcher.Events:
 			if !ok {
@@ -167,15 +174,21 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) {
 				if coat.IsCoatFile(event.Name) {
-					logger.Info("coat file changed, reloading", "file", event.Name)
-					reloadResult := coat.LoadPathsWithWarnings(coatPaths)
-					for _, w := range reloadResult.Warnings {
-						logger.Warn("coat validation warning", "warning", w)
+					// Reset the debounce timer on each qualifying event.
+					if debounceTimer != nil {
+						debounceTimer.Stop()
 					}
-					for _, e := range reloadResult.Errors {
-						logger.Warn("reload error", "error", e)
-					}
-					srv.Reload(reloadResult.Coats)
+					debounceTimer = time.AfterFunc(debounceDelay, func() {
+						logger.Info("coat file changed, reloading", "file", event.Name)
+						reloadResult := coat.LoadPathsWithWarnings(coatPaths)
+						for _, w := range reloadResult.Warnings {
+							logger.Warn("coat validation warning", "warning", w)
+						}
+						for _, e := range reloadResult.Errors {
+							logger.Warn("reload error", "error", e)
+						}
+						srv.Reload(reloadResult.Coats)
+					})
 				}
 			}
 		case err, ok := <-watcher.Errors:
