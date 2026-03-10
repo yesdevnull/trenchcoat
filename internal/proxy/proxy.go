@@ -406,7 +406,7 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	if p.config.BodyFileThreshold > 0 && len(responseBody) > p.config.BodyFileThreshold {
 		bodyFileName := strings.TrimSuffix(filename, ".yaml") + "_body.txt"
 		bodyFilePath := filepath.Join(p.config.WriteDir, bodyFileName)
-		if err := os.WriteFile(bodyFilePath, []byte(responseBody), 0644); err != nil {
+		if err := os.WriteFile(bodyFilePath, []byte(responseBody), 0600); err != nil {
 			p.logger.Error("failed to write body file", "path", bodyFilePath, "error", err)
 			return
 		}
