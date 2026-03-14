@@ -62,11 +62,13 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 		cfg.Logger = slog.Default()
 	}
 
+	coats, paths := extractCoatsAndPaths(loaded)
+
 	s := &Server{
 		logger:      cfg.Logger,
 		verbose:     cfg.Verbose,
 		recordCalls: cfg.RecordCalls,
-		matcher:     matcher.New(extractCoats(loaded)),
+		matcher:     matcher.NewWithPaths(coats, paths),
 		coats:       loaded,
 		calls:       make(map[string][]CapturedRequest),
 	}
@@ -82,13 +84,15 @@ func New(loaded []coat.LoadedCoat, cfg Config) *Server {
 	return s
 }
 
-// extractCoats returns just the Coat values from a slice of LoadedCoat.
-func extractCoats(loaded []coat.LoadedCoat) []coat.Coat {
+// extractCoatsAndPaths returns the Coat values and file paths from a slice of LoadedCoat.
+func extractCoatsAndPaths(loaded []coat.LoadedCoat) ([]coat.Coat, []string) {
 	coats := make([]coat.Coat, len(loaded))
+	paths := make([]string, len(loaded))
 	for i, lc := range loaded {
 		coats[i] = lc.Coat
+		paths[i] = lc.FilePath
 	}
-	return coats
+	return coats, paths
 }
 
 // Start begins listening on the configured port. It returns the actual
@@ -149,7 +153,8 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 
 // Reload replaces the loaded coats and rebuilds the matcher.
 func (s *Server) Reload(loaded []coat.LoadedCoat) {
-	m := matcher.New(extractCoats(loaded))
+	coats, paths := extractCoatsAndPaths(loaded)
+	m := matcher.NewWithPaths(coats, paths)
 
 	s.mu.Lock()
 	s.coats = loaded
@@ -164,7 +169,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RLock()
 	m := s.matcher
-	allCoats := s.coats
 	s.mu.RUnlock()
 
 	var result *matcher.MatchResult
@@ -187,34 +191,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.recordCall(result.Name, r)
 	}
 
-	// Look up the coat's source file path for logging.
-	// Match on name+method+uri, but only use the path when there is a
-	// single unique file path to avoid attributing the request to the wrong
-	// file when duplicate coats exist across different files or names are empty.
-	var coatFilePath string
-	if s.verbose {
-		var firstPath string
-		hasMatch := false
-		ambiguous := false
-		resultMethod := normalizeMethod(result.Coat.Request.Method)
-		for _, lc := range allCoats {
-			if lc.Coat.Name == result.Coat.Name &&
-				lc.Coat.Request.URI == result.Coat.Request.URI &&
-				normalizeMethod(lc.Coat.Request.Method) == resultMethod {
-				if !hasMatch {
-					firstPath = lc.FilePath
-					hasMatch = true
-				} else if lc.FilePath != firstPath {
-					// Multiple matching coats from different files: path is ambiguous.
-					ambiguous = true
-					break
-				}
-			}
-		}
-		if hasMatch && !ambiguous {
-			coatFilePath = firstPath
-		}
-	}
+	coatFilePath := result.FilePath
 
 	// Handle exhausted sequences.
 	if result.Exhausted {
@@ -236,7 +213,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Resolve body_file before setting headers so error responses stay clean.
 	body := resp.Body
 	if resp.BodyFile != "" {
-		bodyBytes, err := resolveBodyFile(resp.BodyFile, result.Coat, allCoats)
+		bodyBytes, err := resolveBodyFile(resp.BodyFile, result.FilePath)
 		if err != nil {
 			s.logger.Error("body_file resolution failed", "path", resp.BodyFile, "error", err)
 			w.Header().Set("Content-Type", "application/json")
@@ -446,16 +423,6 @@ func (s *Server) Calls(name string) []CapturedRequest {
 	return out
 }
 
-// normalizeMethod returns the effective HTTP method, applying the same rules
-// as the matcher: uppercase, default to GET when empty.
-func normalizeMethod(method string) string {
-	m := strings.ToUpper(method)
-	if m == "" {
-		return "GET"
-	}
-	return m
-}
-
 // ResetCalls clears all recorded call data.
 func (s *Server) ResetCalls() {
 	s.callsMu.Lock()
@@ -535,22 +502,7 @@ func renderTemplate(body string, r *http.Request) string {
 }
 
 // resolveBodyFile resolves a body_file path relative to the coat file's location.
-func resolveBodyFile(bodyFile string, c coat.Coat, allCoats []coat.LoadedCoat) ([]byte, error) {
-	// Find the file path for this coat, detecting ambiguous matches.
-	var coatFilePath string
-	cMethod := normalizeMethod(c.Request.Method)
-	for _, lc := range allCoats {
-		if lc.Coat.Name == c.Name &&
-			lc.Coat.Request.URI == c.Request.URI &&
-			normalizeMethod(lc.Coat.Request.Method) == cMethod {
-			if coatFilePath == "" {
-				coatFilePath = lc.FilePath
-			} else if lc.FilePath != coatFilePath {
-				return nil, fmt.Errorf("ambiguous coat source for body_file %q: multiple coats match name=%q uri=%q method=%q", bodyFile, c.Name, c.Request.URI, c.Request.Method)
-			}
-		}
-	}
-
+func resolveBodyFile(bodyFile string, coatFilePath string) ([]byte, error) {
 	// Reject absolute paths — body_file must always be relative.
 	if filepath.IsAbs(bodyFile) {
 		return nil, fmt.Errorf("body_file must be a relative path, got absolute path")

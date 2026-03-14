@@ -173,8 +173,8 @@ func TestServe_VerboseLogging_UnnamedCoatFilePath(t *testing.T) {
 }
 
 func TestServe_VerboseLogging_AmbiguousCoatOmitsFilePath(t *testing.T) {
-	// When multiple coats share the same name+method+URI across different
-	// files, the file path should be omitted to avoid misattribution.
+	// With FilePath stored on MatchResult, the first coat's file path is
+	// always available — no ambiguity suppression needed.
 	coats := []coat.LoadedCoat{
 		{
 			FilePath: "/fake/a.yaml",
@@ -213,9 +213,8 @@ func TestServe_VerboseLogging_AmbiguousCoatOmitsFilePath(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 
 	logOutput := logBuf.String()
-	// File path should NOT appear because the match is ambiguous.
-	if strings.Contains(logOutput, "file=") {
-		t.Errorf("expected no 'file=' in log output for ambiguous coats, got:\n%s", logOutput)
+	if !strings.Contains(logOutput, "file=/fake/a.yaml") {
+		t.Errorf("expected 'file=/fake/a.yaml' in log output, got:\n%s", logOutput)
 	}
 }
 

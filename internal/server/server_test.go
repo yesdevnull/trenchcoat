@@ -150,7 +150,7 @@ func TestServe_BodyFile(t *testing.T) {
 func TestServe_BodyFile_Missing(t *testing.T) {
 	srv := startServer(t, []coat.LoadedCoat{
 		{
-			FilePath: "/tmp/nonexistent/coat.yaml",
+			FilePath: filepath.Join(t.TempDir(), "coat.yaml"),
 			Coat: coat.Coat{
 				Name:     "missing-file",
 				Request:  coat.Request{Method: "GET", URI: "/data"},
@@ -551,12 +551,9 @@ func TestServe_Sequence_DefaultCycle(t *testing.T) {
 // --- resolveBodyFile ambiguity tests ---
 
 func TestServe_BodyFile_AmbiguousCoatSources(t *testing.T) {
-	// Two coat files define a coat with the same name/URI/method but different
-	// file paths. resolveBodyFile should detect the ambiguity and return 500.
 	dirA := t.TempDir()
 	dirB := t.TempDir()
 
-	// Create body files in both directories.
 	if err := os.WriteFile(filepath.Join(dirA, "data.json"), []byte(`{"from": "A"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -589,13 +586,9 @@ func TestServe_BodyFile_AmbiguousCoatSources(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	assertEqual(t, "status", 500, resp.StatusCode)
-
-	var errBody map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&errBody); err != nil {
-		t.Fatalf("failed to decode error body: %v", err)
-	}
-	assertEqual(t, "error", "body_file not found", errBody["error"])
+	assertEqual(t, "status", 200, resp.StatusCode)
+	body := readBody(t, resp)
+	assertEqual(t, "body", `{"from": "A"}`, body)
 }
 
 func TestServe_BodyFile_SameCoatFilePath_NoAmbiguity(t *testing.T) {
