@@ -3,6 +3,7 @@ package matcher_test
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -1041,6 +1042,37 @@ func TestMatch_BodyMatch_ExplicitExact(t *testing.T) {
 	result := m.Match(req)
 	if result == nil {
 		t.Fatal("expected explicit exact match")
+	}
+}
+
+// --- Body I/O error handling ---
+
+type errorReader struct {
+	err error
+}
+
+func (r *errorReader) Read(p []byte) (int, error) {
+	return 0, r.err
+}
+
+func (r *errorReader) Close() error {
+	return nil
+}
+
+func TestMatchBodyIOError(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "body-match",
+			Request:  coat.Request{URI: "/test", Body: coat.StringPtr("expected")},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := httptest.NewRequest("GET", "/test", &errorReader{err: fmt.Errorf("disk failure")})
+	result := m.Match(req)
+	if result != nil {
+		t.Error("expected no match when body read fails, but got a match")
 	}
 }
 
