@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1252,6 +1253,61 @@ func TestProxy_NameTemplate(t *testing.T) {
 		allFiles, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
 		t.Fatalf("expected file POST-api_v1_users-201.yaml, found: %v", allFiles)
 	}
+}
+
+func TestProxyCapturesConcurrencyBounded(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, "ok")
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL: upstream.URL,
+		WriteDir:    writeDir,
+		Dedupe:      "append",
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const numRequests = 30
+	var wg sync.WaitGroup
+	client := &http.Client{Timeout: 5 * time.Second}
+	for i := 0; i < numRequests; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			resp, err := client.Get(fmt.Sprintf("http://%s/path/%d", addr, n))
+			if err != nil {
+				t.Errorf("request %d failed: %v", n, err)
+				return
+			}
+			resp.Body.Close()
+		}(i)
+	}
+	wg.Wait()
+
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected captured coat files, got none")
+	}
+	if len(files) < 20 {
+		t.Errorf("expected at least 20 coat files, got %d", len(files))
+	}
+
+	_ = p.Shutdown(5 * time.Second)
 }
 
 func TestProxyShutdownRespectsTimeoutWithPendingCaptures(t *testing.T) {
