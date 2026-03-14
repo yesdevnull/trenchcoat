@@ -142,17 +142,21 @@ func New(coats []coat.Coat) *Matcher {
 	return &Matcher{entries: entries}
 }
 
+// errBodyTooLarge is returned by the body reader when the request body exceeds
+// maxBodyMatchSize.
+var errBodyTooLarge = fmt.Errorf("request body exceeds %d bytes", maxBodyMatchSize)
+
 // lazyBodyReader creates a function that lazily reads the request body on first
 // call, bounded to maxBodyMatchSize. The request body is reconstituted so
 // downstream handlers still see the full body.
-func lazyBodyReader(req *http.Request) func() (string, bool) {
+func lazyBodyReader(req *http.Request) func() (string, error) {
 	var reqBodyStr string
 	var bodyRead bool
-	var bodyReadErr bool
+	var readErr error
 
-	return func() (string, bool) {
+	return func() (string, error) {
 		if bodyRead {
-			return reqBodyStr, bodyReadErr
+			return reqBodyStr, readErr
 		}
 		bodyRead = true
 		if req.Body != nil {
@@ -162,28 +166,26 @@ func lazyBodyReader(req *http.Request) func() (string, bool) {
 			limited := io.LimitReader(origBody, maxBodyMatchSize+1)
 			allRead, err := io.ReadAll(limited)
 			if err != nil {
-				bodyReadErr = true
+				readErr = fmt.Errorf("reading request body: %w", err)
+				req.Body = httputil.ReconstitutedBody(allRead, origBody)
+				return reqBodyStr, readErr
 			}
 
 			// If we read more than maxBodyMatchSize bytes, treat it as too large
 			// for body matching, but still restore the full body for downstream use.
-			var reqBody []byte
 			if len(allRead) > maxBodyMatchSize {
-				bodyReadErr = true
-				reqBody = allRead[:maxBodyMatchSize]
+				readErr = errBodyTooLarge
+				reqBodyStr = string(allRead[:maxBodyMatchSize])
 			} else {
-				reqBody = allRead
+				reqBodyStr = string(allRead)
 			}
-
-			// Convert to string once to avoid repeated allocations in matchesBody.
-			reqBodyStr = string(reqBody)
 
 			// Reconstitute req.Body as the bytes already read plus the remaining
 			// unread original body so downstream handlers see the full body, and
 			// ensure Close() still delegates to the original body's Close().
 			req.Body = httputil.ReconstitutedBody(allRead, origBody)
 		}
-		return reqBodyStr, bodyReadErr
+		return reqBodyStr, readErr
 	}
 }
 
@@ -221,7 +223,7 @@ type candidate struct {
 }
 
 // findCandidates evaluates all entries against the request and returns matching candidates.
-func (m *Matcher) findCandidates(req *http.Request, getBody func() (string, bool)) []candidate {
+func (m *Matcher) findCandidates(req *http.Request, getBody func() (string, error)) []candidate {
 	var candidates []candidate
 	for _, e := range m.entries {
 		if !matchesMethod(e, req.Method) {
@@ -534,12 +536,12 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 	return true
 }
 
-func matchesBody(e *entry, getBody func() (string, bool)) bool {
+func matchesBody(e *entry, getBody func() (string, error)) bool {
 	if e.coat.Request.Body == nil {
 		return true // No body constraint — matches anything.
 	}
-	body, readErr := getBody()
-	if readErr {
+	body, err := getBody()
+	if err != nil {
 		return false // Treat read errors as non-match.
 	}
 	switch e.coat.Request.BodyMatch {
