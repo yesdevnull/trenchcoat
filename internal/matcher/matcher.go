@@ -4,7 +4,6 @@
 package matcher
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/yesdevnull/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/httputil"
 )
 
 // maxBodyMatchSize is the maximum request body size (in bytes) that the matcher
@@ -181,13 +181,7 @@ func lazyBodyReader(req *http.Request) func() (string, bool) {
 			// Reconstitute req.Body as the bytes already read plus the remaining
 			// unread original body so downstream handlers see the full body, and
 			// ensure Close() still delegates to the original body's Close().
-			req.Body = struct {
-				io.Reader
-				io.Closer
-			}{
-				Reader: io.MultiReader(bytes.NewReader(allRead), origBody),
-				Closer: origBody,
-			}
+			req.Body = httputil.ReconstitutedBody(allRead, origBody)
 		}
 		return reqBodyStr, bodyReadErr
 	}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/yesdevnull/trenchcoat/internal/coat"
+	"github.com/yesdevnull/trenchcoat/internal/httputil"
 	"github.com/yesdevnull/trenchcoat/internal/matcher"
 )
 
@@ -415,13 +416,7 @@ func (s *Server) recordCall(name string, r *http.Request) {
 			}
 		}
 		// Reconstruct r.Body: captured bytes + remaining unread original body.
-		r.Body = struct {
-			io.Reader
-			io.Closer
-		}{
-			Reader: io.MultiReader(bytes.NewReader(headBytes), origBody),
-			Closer: origBody,
-		}
+		r.Body = httputil.ReconstitutedBody(headBytes, origBody)
 	}
 
 	s.callsMu.Lock()
@@ -521,13 +516,7 @@ func renderTemplate(body string, r *http.Request) string {
 		// Reconstruct r.Body so that downstream handlers can still read
 		// the entire request body: first the bytes we've captured, then
 		// the remaining unread bytes from the original body.
-		r.Body = struct {
-			io.Reader
-			io.Closer
-		}{
-			Reader: io.MultiReader(bytes.NewReader(bodyBytes), origBody),
-			Closer: origBody,
-		}
+		r.Body = httputil.ReconstitutedBody(bodyBytes, origBody)
 	}
 
 	data := templateData{
