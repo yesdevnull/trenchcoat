@@ -533,6 +533,24 @@ func resolveBodyFile(bodyFile string, coatFilePath string) ([]byte, error) {
 		return nil, fmt.Errorf("unable to resolve body_file path: %w", err)
 	}
 
+	// Check that the base directory exists before attempting symlink resolution.
+	if _, statErr := os.Stat(absBase); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return nil, fmt.Errorf("body_file base directory %q not found", baseDir)
+		}
+		return nil, fmt.Errorf("body_file base directory %q: %w", baseDir, statErr)
+	}
+
+	// Check if the target file exists before attempting symlink resolution,
+	// so the error message is clear ("not found") rather than confusing
+	// ("unable to resolve symlinks").
+	if _, statErr := os.Stat(absResolved); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return nil, fmt.Errorf("body_file %q not found", bodyFile)
+		}
+		return nil, fmt.Errorf("body_file %q: %w", bodyFile, statErr)
+	}
+
 	// Resolve symlinks to prevent escapes via symlinked paths.
 	canonicalBase, err := filepath.EvalSymlinks(absBase)
 	if err != nil {
