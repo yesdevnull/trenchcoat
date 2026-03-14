@@ -228,7 +228,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Render response body templates.
-	body = renderTemplate(body, r)
+	body = renderTemplate(body, r, s.logger)
 
 	// Apply delay with optional jitter (context-aware so it cancels if the client disconnects).
 	if resp.DelayMs > 0 || resp.DelayJitterMs > 0 {
@@ -460,7 +460,7 @@ func (td templateData) Segment(n int) string {
 
 // renderTemplate parses and executes a Go text/template with request context.
 // Returns the original body if it contains no template directives or if parsing fails.
-func renderTemplate(body string, r *http.Request) string {
+func renderTemplate(body string, r *http.Request, logger *slog.Logger) string {
 	if !strings.Contains(body, "{{") {
 		return body
 	}
@@ -496,6 +496,7 @@ func renderTemplate(body string, r *http.Request) string {
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
+		logger.Warn("response template execution failed", "error", err)
 		return body
 	}
 	return buf.String()

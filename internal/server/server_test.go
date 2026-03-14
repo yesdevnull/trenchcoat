@@ -823,6 +823,48 @@ func TestServe_BodyFile_Missing_ClearLogMessage(t *testing.T) {
 	}
 }
 
+func TestServe_TemplateExecutionErrorLogged(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	coats := []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:    "bad-template",
+				Request: coat.Request{URI: "/tmpl"},
+				Response: &coat.Response{
+					Code: 200,
+					Body: `result: {{call .Method}}`,
+				},
+			},
+		},
+	}
+
+	srv := server.New(coats, server.Config{Logger: logger})
+	addr, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get("http://" + addr + "/tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body := readBody(t, resp)
+	assertEqual(t, "status", 200, resp.StatusCode)
+	if !strings.Contains(body, "{{call .Method}}") {
+		t.Errorf("expected raw template in response body, got: %s", body)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "template execution failed") {
+		t.Errorf("expected 'template execution failed' in logs, got: %s", logOutput)
+	}
+}
+
 func TestCalls_ReturnsClonedHeaders(t *testing.T) {
 	coats := []coat.LoadedCoat{
 		{
