@@ -36,7 +36,8 @@ const (
 // entry is a compiled coat with pre-computed matching metadata.
 type entry struct {
 	coat        coat.Coat
-	index       int // original definition order
+	index       int    // original definition order
+	filePath    string // source file path, empty for programmatic coats
 	uriType     uriMatchType
 	regex       *regexp.Regexp // only for regex URIs
 	bodyRegex   *regexp.Regexp // only for body_match: regex
@@ -54,8 +55,9 @@ type entry struct {
 type MatchResult struct {
 	Name        string
 	Coat        coat.Coat
-	ResponseIdx int  // index into Responses for sequence coats, -1 for singular
-	Exhausted   bool // true if sequence is exhausted (once mode)
+	FilePath    string // source file path (empty for programmatic coats)
+	ResponseIdx int    // index into Responses for sequence coats, -1 for singular
+	Exhausted   bool   // true if sequence is exhausted (once mode)
 }
 
 // Matcher matches HTTP requests to coat definitions.
@@ -140,6 +142,18 @@ func New(coats []coat.Coat) *Matcher {
 	}
 
 	return &Matcher{entries: entries}
+}
+
+// NewWithPaths creates a Matcher from coats with associated file paths.
+// The paths slice must be the same length as coats (use "" for programmatic coats).
+func NewWithPaths(coats []coat.Coat, paths []string) *Matcher {
+	m := New(coats)
+	for i := range m.entries {
+		if i < len(paths) {
+			m.entries[i].filePath = paths[i]
+		}
+	}
+	return m
 }
 
 // errBodyTooLarge is returned by the body reader when the request body exceeds
@@ -258,8 +272,9 @@ func selectBest(candidates []candidate) *MatchResult {
 
 	best := candidates[0].entry
 	result := &MatchResult{
-		Name: best.resolvedName(),
-		Coat: best.coat,
+		Name:     best.resolvedName(),
+		Coat:     best.coat,
+		FilePath: best.filePath,
 	}
 
 	idx, exhausted := resolveSequence(best)

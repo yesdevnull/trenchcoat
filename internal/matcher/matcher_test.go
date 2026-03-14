@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1306,6 +1307,30 @@ func TestMatchVerbose_MatchReturnsNoMismatches(t *testing.T) {
 	}
 	if len(mismatches) != 0 {
 		t.Fatalf("expected no mismatches on successful match, got %d", len(mismatches))
+	}
+}
+
+// --- FilePath propagation ---
+
+func TestMatchResultFilePath(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name:     "test",
+			Request:  coat.Request{URI: "/test"},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	wantPath := filepath.Join(t.TempDir(), "test.yaml")
+	paths := []string{wantPath}
+	m := matcher.NewWithPaths(coats, paths)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	result := m.Match(req)
+	if result == nil {
+		t.Fatal("expected match")
+	}
+	if result.FilePath != wantPath {
+		t.Errorf("got FilePath %q, want %q", result.FilePath, wantPath)
 	}
 }
 
