@@ -550,9 +550,9 @@ func TestServe_Sequence_DefaultCycle(t *testing.T) {
 	assertEqual(t, "third (cycle)", "a", readBody(t, resp3))
 }
 
-// --- resolveBodyFile ambiguity tests ---
+// --- resolveBodyFile tests: duplicate coats and body_file resolution ---
 
-func TestServe_BodyFile_AmbiguousCoatSources(t *testing.T) {
+func TestServe_BodyFile_DuplicateCoatsFirstWins(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
 

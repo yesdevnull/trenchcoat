@@ -534,6 +534,12 @@ func resolveBodyFile(bodyFile string, coatFilePath string) ([]byte, error) {
 		return nil, fmt.Errorf("unable to resolve body_file path: %w", err)
 	}
 
+	// Early containment check before any Stat calls to avoid leaking
+	// file existence information for paths outside the base directory.
+	if !isSubPath(absBase, absResolved) {
+		return nil, fmt.Errorf("body_file path escapes the coat file directory")
+	}
+
 	// Check that the base directory exists before attempting symlink resolution.
 	if _, statErr := os.Stat(absBase); statErr != nil {
 		if os.IsNotExist(statErr) {
