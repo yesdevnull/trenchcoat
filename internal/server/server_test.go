@@ -1,8 +1,10 @@
 package server_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -778,6 +780,46 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 	t.Helper()
 	if expected != actual {
 		t.Errorf("%s: expected %v, got %v", field, expected, actual)
+	}
+}
+
+func TestServe_BodyFile_Missing_ClearLogMessage(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	coats := []coat.LoadedCoat{
+		{
+			FilePath: filepath.Join(t.TempDir(), "coat.yaml"),
+			Coat: coat.Coat{
+				Name:     "missing-file",
+				Request:  coat.Request{Method: "GET", URI: "/data"},
+				Response: &coat.Response{Code: 200, BodyFile: "does-not-exist.json"},
+			},
+		},
+	}
+
+	srv := server.New(coats, server.Config{Logger: logger})
+	addr, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get("http://" + addr + "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_ = readBody(t, resp)
+
+	assertEqual(t, "status", 500, resp.StatusCode)
+
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "symlink") {
+		t.Errorf("log message should not mention symlinks for a missing file, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "not found") {
+		t.Errorf("log message should contain 'not found', got: %s", logOutput)
 	}
 }
 
