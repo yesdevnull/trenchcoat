@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1249,5 +1251,45 @@ func TestProxy_NameTemplate(t *testing.T) {
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		allFiles, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
 		t.Fatalf("expected file POST-api_v1_users-201.yaml, found: %v", allFiles)
+	}
+}
+
+func TestProxyShutdownRespectsTimeoutWithPendingCaptures(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, "ok")
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL: upstream.URL,
+		WriteDir:    writeDir,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := p.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get("http://" + addr + "/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- p.Shutdown(500 * time.Millisecond)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Shutdown did not return within timeout")
 	}
 }

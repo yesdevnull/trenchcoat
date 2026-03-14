@@ -200,10 +200,27 @@ func (p *Proxy) WaitCaptures() {
 	p.captures.Wait()
 }
 
-// Shutdown gracefully stops the proxy, waiting for pending captures to complete.
+// Shutdown gracefully stops the proxy, waiting for pending captures to complete
+// within half the timeout, then draining HTTP connections with the remaining time.
 func (p *Proxy) Shutdown(timeout time.Duration) error {
-	p.captures.Wait()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Split timeout: half for capture drain, half for HTTP drain.
+	captureDrain := timeout / 2
+	httpDrain := timeout - captureDrain
+
+	// Wait for captures with timeout.
+	done := make(chan struct{})
+	go func() {
+		p.captures.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// All captures finished.
+	case <-time.After(captureDrain):
+		p.logger.Warn("timed out waiting for pending captures to complete")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), httpDrain)
 	defer cancel()
 	return p.httpServer.Shutdown(ctx)
 }
