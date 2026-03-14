@@ -1258,7 +1258,7 @@ func TestProxy_NameTemplate(t *testing.T) {
 func TestProxyCapturesConcurrencyBounded(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	defer upstream.Close()
 
@@ -1289,7 +1289,7 @@ func TestProxyCapturesConcurrencyBounded(t *testing.T) {
 				t.Errorf("request %d failed: %v", n, err)
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}(i)
 	}
 	wg.Wait()
@@ -1313,7 +1313,7 @@ func TestProxyCapturesConcurrencyBounded(t *testing.T) {
 func TestProxyShutdownRespectsTimeoutWithPendingCaptures(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		fmt.Fprint(w, "ok")
+		_, _ = fmt.Fprint(w, "ok")
 	}))
 	defer upstream.Close()
 
@@ -1336,7 +1336,7 @@ func TestProxyShutdownRespectsTimeoutWithPendingCaptures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	done := make(chan error, 1)
 	go func() {
