@@ -146,12 +146,14 @@ func New(coats []coat.Coat) *Matcher {
 
 // NewWithPaths creates a Matcher from coats with associated file paths.
 // The paths slice must be the same length as coats (use "" for programmatic coats).
+// Panics if len(paths) != len(coats).
 func NewWithPaths(coats []coat.Coat, paths []string) *Matcher {
+	if len(paths) != len(coats) {
+		panic(fmt.Sprintf("matcher.NewWithPaths: len(paths)=%d != len(coats)=%d", len(paths), len(coats)))
+	}
 	m := New(coats)
 	for i := range m.entries {
-		if i < len(paths) {
-			m.entries[i].filePath = paths[i]
-		}
+		m.entries[i].filePath = paths[i]
 	}
 	return m
 }

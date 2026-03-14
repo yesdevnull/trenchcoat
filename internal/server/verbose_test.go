@@ -172,9 +172,9 @@ func TestServe_VerboseLogging_UnnamedCoatFilePath(t *testing.T) {
 	}
 }
 
-func TestServe_VerboseLogging_AmbiguousCoatOmitsFilePath(t *testing.T) {
-	// With FilePath stored on MatchResult, the first coat's file path is
-	// always available — no ambiguity suppression needed.
+func TestServe_VerboseLogging_DuplicateCoatsLogsFirstFilePath(t *testing.T) {
+	// When multiple coats share the same name+method+URI across different
+	// files, the first coat's file path is logged (deterministic by order).
 	coats := []coat.LoadedCoat{
 		{
 			FilePath: "/fake/a.yaml",
