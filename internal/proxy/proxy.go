@@ -75,7 +75,8 @@ type Proxy struct {
 	mu       sync.Mutex
 	counters map[string]int // for append dedup mode
 
-	captures sync.WaitGroup
+	captures   sync.WaitGroup
+	captureSem chan struct{} // bounds concurrent capture goroutines
 }
 
 // New creates a new Proxy.
@@ -146,7 +147,8 @@ func New(cfg Config) (*Proxy, error) {
 				return http.ErrUseLastResponse
 			},
 		},
-		counters: make(map[string]int),
+		counters:   make(map[string]int),
+		captureSem: make(chan struct{}, 20),
 	}
 
 	return p, nil
@@ -318,7 +320,18 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Capture if applicable.
 	if shouldCapture {
-		p.captures.Go(func() { p.captureCoat(r, reqBody, upstreamResp, respBody) })
+		capReq := captureRequest{
+			Method:   r.Method,
+			URI:      r.URL.Path,
+			RawQuery: r.URL.RawQuery,
+			Header:   r.Header.Clone(),
+			Body:     reqBody,
+		}
+		p.captures.Go(func() {
+			p.captureSem <- struct{}{}
+			defer func() { <-p.captureSem }()
+			p.captureCoatFromCopy(capReq, upstreamResp, respBody)
+		})
 	}
 }
 
@@ -334,7 +347,7 @@ func (p *Proxy) shouldCapture(urlPath string) bool {
 	return matched
 }
 
-func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response, respBody []byte) {
+func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, respBody []byte) {
 	// Decompress response body for human-readable coat capture.
 	captureBody := respBody
 	decompressed := false
@@ -358,9 +371,9 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	var reqHeaders, respHeaders map[string]string
 	if !p.config.NoHeaders {
 		reqHeaders = make(map[string]string)
-		for k := range r.Header {
+		for k := range req.Header {
 			if !p.isStrippedHeader(k) {
-				reqHeaders[k] = r.Header.Get(k)
+				reqHeaders[k] = req.Header.Get(k)
 			}
 		}
 
@@ -385,10 +398,10 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	coatDef := coatFile{
 		Coats: []coatEntry{
 			{
-				Name: fmt.Sprintf("%s %s", r.Method, r.URL.Path),
+				Name: fmt.Sprintf("%s %s", req.Method, req.URI),
 				Request: coatRequest{
-					Method: r.Method,
-					URI:    r.URL.Path,
+					Method: req.Method,
+					URI:    req.URI,
 				},
 				Response: coatResponse{
 					Code:    resp.StatusCode,
@@ -403,17 +416,17 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 		coatDef.Coats[0].Request.Headers = reqHeaders
 	}
 
-	if p.captureBodyEnabled() && len(reqBody) > 0 {
-		body := string(reqBody)
+	if p.captureBodyEnabled() && len(req.Body) > 0 {
+		body := string(req.Body)
 		coatDef.Coats[0].Request.Body = &body
 	}
 
-	if r.URL.RawQuery != "" {
-		coatDef.Coats[0].Request.Query = r.URL.RawQuery
+	if req.RawQuery != "" {
+		coatDef.Coats[0].Request.Query = req.RawQuery
 	}
 
 	// Generate filename.
-	filename := p.generateFilename(r.Method, r.URL.Path, resp.StatusCode)
+	filename := p.generateFilename(req.Method, req.URI, resp.StatusCode)
 	if filename == "" {
 		// Skip dedup — file already exists.
 		return
@@ -443,6 +456,16 @@ func (p *Proxy) captureCoat(r *http.Request, reqBody []byte, resp *http.Response
 	} else if p.config.Verbose {
 		p.logger.Info("captured coat file", "path", fullPath)
 	}
+}
+
+// captureRequest holds request data copied from *http.Request before the
+// handler returns, so the capture goroutine doesn't reference the original.
+type captureRequest struct {
+	Method   string
+	URI      string
+	RawQuery string
+	Header   http.Header
+	Body     []byte
 }
 
 // nameTemplateData provides fields for custom file name templates.
