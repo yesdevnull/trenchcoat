@@ -541,7 +541,8 @@ func resolveBodyFile(bodyFile string, coatFilePath string) ([]byte, error) {
 	}
 
 	// Check that the base directory exists before attempting symlink resolution.
-	if _, statErr := os.Stat(absBase); statErr != nil {
+	// Use Lstat to avoid following symlinks during the pre-check.
+	if _, statErr := os.Lstat(absBase); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return nil, fmt.Errorf("body_file base directory %q not found", baseDir)
 		}
@@ -550,8 +551,9 @@ func resolveBodyFile(bodyFile string, coatFilePath string) ([]byte, error) {
 
 	// Check if the target file exists before attempting symlink resolution,
 	// so the error message is clear ("not found") rather than confusing
-	// ("unable to resolve symlinks").
-	if _, statErr := os.Stat(absResolved); statErr != nil {
+	// ("unable to resolve symlinks"). Use Lstat to avoid following symlinks
+	// to paths outside the base directory before EvalSymlinks runs.
+	if _, statErr := os.Lstat(absResolved); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return nil, fmt.Errorf("body_file %q not found", bodyFile)
 		}
