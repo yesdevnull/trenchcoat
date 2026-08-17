@@ -1508,3 +1508,33 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 		t.Errorf("%s: expected %v, got %v", field, expected, actual)
 	}
 }
+
+func TestMatch_GlobPrecedence_BracketIsNotLiteralPrefix(t *testing.T) {
+	// '[' makes a URI a glob, but the literal-prefix calculation stopped only at
+	// '*' and '?'. A bracketed pattern was therefore credited with a literal
+	// prefix running to the end of the string, and outranked a glob whose
+	// literal prefix is genuinely longer.
+	//
+	// "/api/[ij]tems/detail" has a real literal prefix of "/api/" (5), while
+	// "/api/items/*" has "/api/items/" (11), so the latter is the more specific
+	// match for /api/items/detail and must win.
+	coats := []coat.Coat{
+		{
+			Name:     "bracket-class",
+			Request:  coat.Request{Method: "GET", URI: "/api/[ij]tems/detail"},
+			Response: &coat.Response{Code: 200},
+		},
+		{
+			Name:     "longer-literal-prefix",
+			Request:  coat.Request{Method: "GET", URI: "/api/items/*"},
+			Response: &coat.Response{Code: 201},
+		},
+	}
+	m := matcher.New(coats)
+
+	result := m.Match(newRequest(t, "GET", "/api/items/detail", nil))
+	if result == nil {
+		t.Fatal("expected a match")
+	}
+	assertEqual(t, "name", "longer-literal-prefix", result.Name)
+}
