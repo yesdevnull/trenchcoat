@@ -2,5 +2,12 @@
 trenchcoat-*
 coverage.out
 coverage.html
+coverage-test.log
 *.test
 dist/
+
+# Editor and OS droppings. Covered by most people's global gitignore, but not
+# everyone's, and a stray .DS_Store in a pull request wastes a review round.
+.DS_Store
+.vscode/
+.idea/
