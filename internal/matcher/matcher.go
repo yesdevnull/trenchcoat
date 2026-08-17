@@ -93,9 +93,14 @@ func New(coats []coat.Coat) *Matcher {
 			// nil so matchesURI will never match it.
 		} else if strings.ContainsAny(c.Request.URI, coat.GlobMetacharacters) {
 			e.uriType = uriGlob
-			// Compute literal prefix length (characters before first wildcard).
+			// Compute literal prefix length (characters before the first glob
+			// metacharacter). This must stop at every character that makes the
+			// URI a glob, '[' included: a character class is not literal, and
+			// counting it as such credits the pattern with a longer literal
+			// prefix than it has, letting it outrank globs that really are more
+			// specific.
 			for _, ch := range c.Request.URI {
-				if ch == '*' || ch == '?' {
+				if strings.ContainsRune(coat.GlobMetacharacters, ch) {
 					break
 				}
 				e.literalLen++
