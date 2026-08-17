@@ -652,6 +652,25 @@ func TestParseFile_EmptyFileIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestParseFile_RejectsExtensionKeysInJSON(t *testing.T) {
+	// The x- allowance is scoped to YAML, where it exists to carry an anchor.
+	// JSON has no anchors and so no use for it, and Extensions is json:"-" so a
+	// JSON x- key is an unknown field like any other. Pinned because the
+	// shipped schema and the documentation have both claimed otherwise.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ext.json")
+	body := `{"x-defaults":{"code":200},"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := coat.ParseFile(path); err == nil {
+		t.Fatal("expected a JSON x- key to be rejected as an unknown field")
+	} else if !strings.Contains(err.Error(), "x-defaults") {
+		t.Fatalf("parse error should name the offending field, got: %v", err)
+	}
+}
+
 func TestParseFile_AllowsTopLevelExtensionKeys(t *testing.T) {
 	// Strict decoding must not break the anchor-holder idiom: a top-level x-
 	// key exists purely to carry a YAML anchor that coats then merge in. Merge

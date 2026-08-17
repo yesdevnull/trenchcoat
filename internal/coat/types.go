@@ -10,6 +10,9 @@ type File struct {
 	// names beginning "x-" are permitted, and nothing reads them: they exist so
 	// a coat file can hold a YAML anchor for coats to merge in, which strict
 	// decoding would otherwise reject. See parse.go.
+	//
+	// json:"-" scopes that to YAML: JSON has no anchors, so a JSON x- key is an
+	// unknown field like any other.
 	Extensions map[string]any `yaml:",inline" json:"-"`
 }
 
