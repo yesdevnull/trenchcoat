@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -154,6 +155,106 @@ func TestProxy_CaptureConcurrencyIsBounded(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("%s never appeared after the blocked captures were released: %v", filepath.Base(path), err)
 		}
+	}
+}
+
+// TestProxy_CoatIsNotPublishedBeforeItsBodyFile pins the order in which a
+// capture publishes the two files it writes.
+//
+// A coat renamed into place ahead of the body_file it names is a valid-looking
+// coat pointing at a file that is not there: the server answers that route with
+// 500, and `serve --watch` on the capture directory reloads on the coat's
+// rename and starts doing so. If the process dies in that window the broken
+// coat is permanent, and under --dedupe skip permanently unrecoverable, because
+// captureExists then skips every future capture of that request.
+//
+// Timing cannot decide this -- the window is two writes apart on an idle
+// machine. The body write is blocked outright instead, with a FIFO at the temp
+// path it writes, and the coat must be absent for as long as the capture is
+// parked there.
+//
+// Unix-only: it needs mkfifo. CI runs the suite on ubuntu-latest.
+func TestProxy_CoatIsNotPublishedBeforeItsBodyFile(t *testing.T) {
+	const (
+		settle    = 250 * time.Millisecond
+		threshold = 16
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = fmt.Fprint(w, strings.Repeat("x", threshold*4))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+
+	// With dedupe=overwrite both names are fully determined by the request, so
+	// the FIFO can go where the body file's bytes actually land.
+	coatPath := filepath.Join(writeDir, "GET_doc_200.yaml")
+	bodyPath := filepath.Join(writeDir, "GET_doc_200_body.txt")
+	blockedBody := blockingPathFor(writeDir, "GET_doc_200_body.txt")
+	if err := syscall.Mkfifo(blockedBody, 0600); err != nil {
+		t.Fatalf("failed to create fifo at %s: %v", blockedBody, err)
+	}
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:       upstream.URL,
+		WriteDir:          writeDir,
+		StripHeaders:      []string{},
+		Dedupe:            "overwrite",
+		BodyFileThreshold: threshold,
+		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+
+	// Cleanups run last-registered-first, so this pair releases the capture
+	// before the proxy is shut down.
+	t.Cleanup(func() { _ = p.Shutdown(10 * time.Second) })
+	drained := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-drained:
+			return
+		default:
+		}
+		// Best effort: O_NONBLOCK so this cannot hang if nothing is parked.
+		fifo, err := os.OpenFile(blockedBody, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, fifo)
+		_ = fifo.Close()
+	})
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(p.URL() + "/doc")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	// The capture is now parked writing the body file.
+	time.Sleep(settle)
+	if _, err := os.Stat(coatPath); err == nil {
+		t.Fatalf("%s was published while the body_file it names was still being written; a coat must never reach the directory ahead of the file it references",
+			filepath.Base(coatPath))
+	}
+
+	drainFifo(t, blockedBody, 30*time.Second)
+	close(drained)
+	p.WaitCaptures()
+
+	if _, err := os.Stat(bodyPath); err != nil {
+		t.Fatalf("the body file never appeared after the capture was released: %v", err)
+	}
+	if _, err := os.Stat(coatPath); err != nil {
+		t.Fatalf("the coat never appeared after the capture was released: %v", err)
 	}
 }
 

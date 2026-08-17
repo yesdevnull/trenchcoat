@@ -549,10 +549,20 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 	}
 	defer p.releaseFilename(base)
 
-	// Decide the body file before marshalling, but do not put it on disk until
-	// the coat itself has been written: a body file left behind by a capture
-	// whose coat failed to write would be picked up by the next capture of the
-	// same request, pairing one interaction's coat with another's body.
+	// Decide the body file before marshalling. Both files are staged as temps
+	// and the body is renamed into place first, so the coat's rename is the one
+	// point at which the capture becomes visible and a coat never names a
+	// body_file that is not on disk yet. A coat published ahead of its body is
+	// worse than either file being missing: the server answers that route with
+	// 500, `serve --watch` on the capture directory reloads on the coat's rename
+	// and starts doing so, and a process killed in that window leaves the broken
+	// coat behind for good -- under dedupe=skip permanently, since captureExists
+	// then skips every future capture of the request that would repair it.
+	//
+	// A body file left behind by a coat whose rename failed is harmless:
+	// bodyFileName is derived from filename, so the next capture of the same
+	// request overwrites it under overwrite and skip, and under append both
+	// names carry the same counter.
 	var bodyFileName, bodyFileContent string
 	if p.config.BodyFileThreshold > 0 && len(responseBody) > p.config.BodyFileThreshold {
 		bodyFileName = strings.TrimSuffix(filename, ".yaml") + "_body.txt"
@@ -573,21 +583,29 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 	defer baseMu.Unlock()
 
 	fullPath := filepath.Join(p.config.WriteDir, filename)
-	if err := writeFileAtomic(fullPath, data); err != nil {
+	coatTmp, err := stageFile(fullPath, data)
+	if err != nil {
 		p.logger.Error("failed to write coat file", "path", fullPath, "error", err)
 		return
 	}
 
 	if bodyFileName != "" {
 		bodyFilePath := filepath.Join(p.config.WriteDir, bodyFileName)
-		if err := writeFileAtomic(bodyFilePath, []byte(bodyFileContent)); err != nil {
-			p.logger.Error("failed to write body file, removing the coat that references it",
+		bodyTmp, err := stageFile(bodyFilePath, []byte(bodyFileContent))
+		if err == nil {
+			err = commitStaged(bodyTmp, bodyFilePath)
+		}
+		if err != nil {
+			p.logger.Error("failed to write body file, discarding the coat that references it",
 				"path", bodyFilePath, "coat", fullPath, "error", err)
-			if rmErr := os.Remove(fullPath); rmErr != nil {
-				p.logger.Error("failed to remove the orphaned coat file", "path", fullPath, "error", rmErr)
-			}
+			_ = os.Remove(coatTmp)
 			return
 		}
+	}
+
+	if err := commitStaged(coatTmp, fullPath); err != nil {
+		p.logger.Error("failed to write coat file", "path", fullPath, "error", err)
+		return
 	}
 
 	if p.config.Verbose {
@@ -607,20 +625,28 @@ func tempPathFor(path string) string {
 	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp")
 }
 
-// writeFileAtomic writes data to path so that no reader ever observes a partial
-// file: it writes a temp file in the same directory and renames it into place,
-// and rename is atomic.
+// stageFile writes data to the temp path beside path, returning that temp path
+// for commitStaged to rename into place. Staging and committing are separate so
+// a capture writing two files can put both on disk before either is visible.
 //
-// os.WriteFile truncates and then writes, so anything reading concurrently --
-// `trenchcoat serve --watch` pointed at the capture directory, or `trenchcoat
-// validate` -- sees a prefix of the new content or an empty file, neither of
-// which is a valid coat. The temp file must share a directory with the
-// destination, since rename cannot cross filesystems.
-func writeFileAtomic(path string, data []byte) error {
+// The temp file must share a directory with the destination, since rename
+// cannot cross filesystems.
+func stageFile(path string, data []byte) (string, error) {
 	tmp := tempPathFor(path)
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return fmt.Errorf("writing %s: %w", tmp, err)
+		return "", fmt.Errorf("writing %s: %w", tmp, err)
 	}
+	return tmp, nil
+}
+
+// commitStaged renames a staged file into place so that no reader ever observes
+// a partial file, removing the temp file if the rename fails.
+//
+// Writing in place with os.WriteFile would truncate and then write, so anything
+// reading concurrently -- `trenchcoat serve --watch` pointed at the capture
+// directory, or `trenchcoat validate` -- would see a prefix of the new content
+// or an empty file, neither of which is a valid coat. Rename is atomic.
+func commitStaged(tmp, path string) error {
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("renaming %s to %s: %w", tmp, path, err)
