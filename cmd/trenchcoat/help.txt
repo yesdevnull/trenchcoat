@@ -88,9 +88,18 @@ COAT FILE FORMAT
 
 URI MATCHING (highest to lowest precedence)
   1. Exact string         /api/v1/users
-  2. Glob pattern          /api/v1/users/* or /api/**/posts
+  2. Glob pattern         /api/v1/users/* or /api/**/posts
   3. Regex (~/prefix)     ~/api/v1/users/\d+
   Method-specific coats rank above method: ANY at the same specificity.
+
+  A URI counts as a glob if it contains *, ? or [ -- [ included, because the
+  matcher reads it as a character class. Escape it as \[ to match a literal
+  bracket; the URI is still matched as a glob.
+
+  Header, query and body globs are a different dialect from URI globs: there,
+  * spans everything including / and newlines, and [ is a literal. So a header
+  pattern of "*" matches "application/json", where a URI glob would stop at the
+  segment boundary.
 
 SERVE FLAGS
   --coats strings       Coat files or directories to load (repeatable)
@@ -113,6 +122,18 @@ PROXY FLAGS
   --pretty-json             Pretty-print JSON response bodies
   --body-file-threshold int Write bodies larger than N bytes to separate files
   --name-template string    Custom filename template, e.g. {{.Method}}-{{.Path}}-{{.Status}}
+  --tls-server-name string  Verify the upstream certificate against this
+                            hostname instead of the upstream URL host, and send
+                            it as SNI. Chain and expiry checks stay on.
+  --verbose                 Log each proxied request and capture event
+  --log-format string       text (default) or json
+
+  Client-specific request headers are never captured, because every header a
+  coat records becomes a match constraint when it is replayed. Hop-by-hop
+  headers, Host, Content-Length, User-Agent, Accept, Accept-Encoding and
+  Accept-Language are all dropped; Content-Type and custom headers are kept.
+  Against a content-negotiating upstream, capture one representation at a time
+  and add the Accept header to the coats by hand.
 
 VALIDATE
   trenchcoat validate <path>...
