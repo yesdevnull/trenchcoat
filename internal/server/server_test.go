@@ -904,3 +904,50 @@ func TestCalls_ReturnsClonedHeaders(t *testing.T) {
 		t.Errorf("expected internal header to remain 'original', got %q", calls2[0].Header.Get("X-Test"))
 	}
 }
+
+func TestServe_CoatWithNoResponse_Returns500(t *testing.T) {
+	// A coat with neither response nor responses matched, was counted as
+	// called, and was then answered with 404 "no matching coat" -- blaming the
+	// request for a defect in the coat, and naming nothing, so even --verbose
+	// could not say which coat was at fault. Only reachable through the
+	// programmatic API, which does not run coat.Validate.
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	coats := []coat.LoadedCoat{
+		{
+			Coat: coat.Coat{
+				Name:    "responseless",
+				Request: coat.Request{Method: "GET", URI: "/broken"},
+			},
+		},
+	}
+
+	srv := server.New(coats, server.Config{Logger: logger})
+	addr, err := srv.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get("http://" + addr + "/broken")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for a coat with no response, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+	if !strings.Contains(string(body), "responseless") {
+		t.Fatalf("response body should name the offending coat, got: %s", body)
+	}
+	if !strings.Contains(logBuf.String(), "responseless") {
+		t.Fatalf("server should log the offending coat name, got: %s", logBuf.String())
+	}
+}

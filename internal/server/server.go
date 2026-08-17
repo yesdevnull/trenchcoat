@@ -216,7 +216,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	} else if result.Coat.Response != nil {
 		resp = *result.Coat.Response
 	} else {
-		s.writeNoMatch(w, r, start, nil)
+		// The coat matched but defines nothing to send. Reporting "no matching
+		// coat" here blames the request for a defect in the coat, and names
+		// nothing, so there is no way to find the culprit. Validation rejects
+		// this, but the programmatic API does not validate.
+		s.writeCoatHasNoResponse(w, r, result.Name, start)
 		return
 	}
 
@@ -321,6 +325,22 @@ func (s *Server) writeSequenceExhausted(w http.ResponseWriter, r *http.Request, 
 		"coat":  coatName,
 	})
 	s.logRequest(r, coatName, http.StatusNotFound, start)
+}
+
+// writeCoatHasNoResponse answers a request that matched a coat defining
+// neither 'response' nor 'responses'. That is a fault in the coat, not in the
+// request, so it is a 500 and it is logged: the name is the only way the author
+// can find which coat to fix.
+func (s *Server) writeCoatHasNoResponse(w http.ResponseWriter, r *http.Request, coatName string, start time.Time) {
+	s.logger.Error("coat has no response defined", "coat", coatName)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": "coat has no response defined",
+		"coat":  coatName,
+	})
+	s.logRequest(r, coatName, http.StatusInternalServerError, start)
 }
 
 func (s *Server) logRequest(r *http.Request, coatName string, status int, start time.Time) {

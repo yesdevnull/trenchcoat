@@ -212,3 +212,34 @@ func TestMatch_SingularResponse(t *testing.T) {
 		t.Fatal("singular response should not be exhausted")
 	}
 }
+
+func TestResolveSequence_UnknownValueCycles(t *testing.T) {
+	// resolveSequence special-cases "once" and "cycle" and had no fallback, so
+	// any other value -- "Once" with the wrong case is the obvious way in --
+	// returned the raw counter and let it run past the end of Responses. The
+	// server then indexes that slice and panics. LoadPaths validates the value,
+	// but WithCoat/WithCoats do not, so a Go test can reach it.
+	coats := []coat.Coat{
+		{
+			Name:      "bad-sequence",
+			Request:   coat.Request{Method: "GET", URI: "/seq"},
+			Responses: []coat.Response{{Code: 200}, {Code: 201}},
+			Sequence:  "Once",
+		},
+	}
+	m := matcher.New(coats)
+
+	for i, want := range []int{0, 1, 0, 1} {
+		r := m.Match(newRequest(t, "GET", "/seq", nil))
+		if r == nil {
+			t.Fatalf("request %d: expected match", i)
+		}
+		if r.Exhausted {
+			t.Fatalf("request %d: an unrecognised sequence value must not exhaust", i)
+		}
+		if r.ResponseIdx != want {
+			t.Fatalf("request %d: got response index %d, want %d (in range of %d responses)",
+				i, r.ResponseIdx, want, len(coats[0].Responses))
+		}
+	}
+}
