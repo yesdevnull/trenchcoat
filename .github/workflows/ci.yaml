@@ -1,7 +1,11 @@
 name: CI
 
-# paths-ignore skips the whole workflow, jobs included, for a docs-only change.
-# That is only safe while no job here is a required status check on main: a
+# paths-ignore skips the whole workflow, jobs included. For a pull request it is
+# evaluated against the entire base..head diff rather than the latest push, so a
+# pull request touching any non-docs file runs every time regardless of what a
+# later commit changes; only a pull request whose whole diff is docs is skipped.
+#
+# That is safe only while no job here is a required status check on main: a
 # required check that never runs leaves the pull request permanently pending.
 # If branch protection is ever turned on, drop these filters rather than trying
 # to make a skipped job report success.
