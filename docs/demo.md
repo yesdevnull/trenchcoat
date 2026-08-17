@@ -80,6 +80,7 @@ Flags:
       --port int                  Port to listen on (default 8080)
       --pretty-json               Pretty-print JSON response bodies in captured coat files
       --strip-headers strings     Headers to redact from captured coat files (default [Authorization,Cookie,Set-Cookie])
+      --tls-server-name string    Verify the upstream TLS certificate against this hostname instead of the upstream URL host (also sets SNI)
       --verbose                   Log each proxied request and capture event
       --write-dir string          Directory to write captured coat files to (default ".")
 

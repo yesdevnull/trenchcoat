@@ -137,6 +137,7 @@ The CLI uses cobra with three subcommands:
 - `--pretty-json` — Pretty-print JSON response bodies in captured coat files
 - `--body-file-threshold` — Write response bodies larger than N bytes to separate files (0 = always inline)
 - `--name-template` — Custom template for captured coat file names (e.g. `{{.Method}}-{{.Path}}-{{.Status}}`)
+- `--tls-server-name` — Verify the upstream TLS certificate against this hostname instead of the upstream URL host (also sets SNI)
 - `--verbose` — Log each proxied request and capture event
 - `--log-format` — Log format: `text` (default) or `json`
 
@@ -230,6 +231,11 @@ coats:
 - Headers in `--strip-headers` are redacted from captures
 - Gzip-compressed upstream responses are decompressed for readability in captured coats
 - Redirect responses are captured as-is (client does not follow redirects and returns the 3xx response as-is via `http.ErrUseLastResponse`)
+- To proxy to an upstream whose TLS certificate is issued for a different
+  hostname than the address it is served from, pass `--tls-server-name` with the
+  hostname the certificate covers. This sets `tls.Config.ServerName`, so it
+  becomes both the SNI name sent upstream and the name the certificate is
+  verified against. Chain and expiry verification remain enabled.
 - To proxy to upstreams with TLS certificates using negative serial numbers
   (rejected by Go 1.23+), set the environment variable
   `GODEBUG=x509negativeserial=1` before starting the proxy. See

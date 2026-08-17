@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +58,7 @@ type Config struct {
 	PrettyJSON        bool   // pretty-print JSON response bodies in captured coats
 	BodyFileThreshold int    // write bodies larger than this to separate files (0 = always inline)
 	NameTemplate      string // custom template for captured coat file names
+	TLSServerName     string // verify the upstream certificate against this hostname instead of the upstream URL host
 	Verbose           bool
 	Logger            *slog.Logger
 }
@@ -126,6 +128,17 @@ func New(cfg Config) (*Proxy, error) {
 		}
 	}
 	transport.DisableCompression = true
+
+	// Verify the upstream certificate against an explicit hostname rather than the
+	// host in the upstream URL, for upstreams whose certificate is issued for a
+	// different name than the address they are served from. This also becomes the
+	// SNI name sent to the upstream.
+	if cfg.TLSServerName != "" {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		transport.TLSClientConfig.ServerName = cfg.TLSServerName
+	}
 
 	var nameTmpl *template.Template
 	if cfg.NameTemplate != "" {

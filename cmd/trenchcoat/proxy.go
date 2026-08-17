@@ -29,6 +29,7 @@ func newProxyCmd() *cobra.Command {
 	cmd.Flags().Bool("pretty-json", false, "Pretty-print JSON response bodies in captured coat files")
 	cmd.Flags().Int("body-file-threshold", 0, "Write response bodies larger than N bytes to separate files (0 = always inline)")
 	cmd.Flags().String("name-template", "", "Custom template for captured coat file names (e.g. {{.Method}}-{{.Path}}-{{.Status}})")
+	cmd.Flags().String("tls-server-name", "", "Verify the upstream TLS certificate against this hostname instead of the upstream URL host (also sets SNI)")
 	cmd.Flags().Bool("verbose", false, "Log each proxied request and capture event")
 	cmd.Flags().String("log-format", "text", "Log output format: text or json")
 
@@ -49,6 +50,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		{"proxy.pretty_json", "pretty-json"},
 		{"proxy.body_file_threshold", "body-file-threshold"},
 		{"proxy.name_template", "name-template"},
+		{"proxy.tls_server_name", "tls-server-name"},
 		{"verbose", "verbose"},
 		{"log_format", "log-format"},
 	} {
@@ -78,6 +80,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	prettyJSON := viper.GetBool("proxy.pretty_json")
 	bodyFileThreshold := viper.GetInt("proxy.body_file_threshold")
 	nameTemplate := viper.GetString("proxy.name_template")
+	tlsServerName := viper.GetString("proxy.tls_server_name")
 	verbose := viper.GetBool("verbose")
 	logFormat := viper.GetString("log_format")
 
@@ -110,6 +113,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		PrettyJSON:        prettyJSON,
 		BodyFileThreshold: bodyFileThreshold,
 		NameTemplate:      nameTemplate,
+		TLSServerName:     tlsServerName,
 		Verbose:           verbose,
 		Logger:            logger,
 	})

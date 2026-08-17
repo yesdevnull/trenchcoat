@@ -13,13 +13,16 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -753,6 +756,118 @@ func TestProxyCmd_NoHeaders(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for proxy to stop")
 	}
+}
+
+func TestProxyCmd_TLSServerName(t *testing.T) {
+	upstream := startMismatchedTLSUpstream(t)
+
+	port := freePort(t)
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cmd := newProxyCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{
+		upstream.URL,
+		"--port", strconv.Itoa(port),
+		"--write-dir", t.TempDir(),
+		"--tls-server-name", "upstream.test",
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Execute()
+	}()
+
+	waitForHTTP(t, proxyURL+"/ping")
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(proxyURL + "/ping")
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read proxy response body: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 through proxy, got %d (body: %s)", resp.StatusCode, body)
+	}
+	if string(body) != "pong" {
+		t.Fatalf("expected upstream body %q, got %q", "pong", body)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for proxy to stop")
+	}
+}
+
+// startMismatchedTLSUpstream starts an HTTPS upstream on 127.0.0.1 presenting a
+// certificate valid only for "upstream.test", and trusts that certificate via
+// http.DefaultTransport, which the proxy clones for upstream requests.
+// Duplicated from internal/proxy/tls_test.go (package proxy_test is not
+// importable from package main).
+func startMismatchedTLSUpstream(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "upstream.test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              []string{"upstream.test"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("failed to parse certificate: %v", err)
+	}
+
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("pong"))
+	}))
+	upstream.TLS = &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{{Certificate: [][]byte{certDER}, PrivateKey: key, Leaf: leaf}},
+	}
+	upstream.Config.ErrorLog = log.New(io.Discard, "", 0)
+	upstream.StartTLS()
+	t.Cleanup(upstream.Close)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+	previous := dt.TLSClientConfig
+	dt.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}
+	t.Cleanup(func() { dt.TLSClientConfig = previous })
+
+	return upstream
 }
 
 func TestProxyCmd_NoHeaders_WithStripHeaders_Conflict(t *testing.T) {
