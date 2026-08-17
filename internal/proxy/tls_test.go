@@ -187,6 +187,34 @@ func TestProxy_TLSServerName_IsSentAsSNI(t *testing.T) {
 	}
 }
 
+// TestProxy_TLSServerName_DoesNotMutateDefaultTransport pins that applying the
+// override leaves http.DefaultTransport's TLS configuration untouched, so other
+// HTTP clients in the same process keep their own settings. http.Transport.Clone
+// deep-copies TLSClientConfig, which is what makes this safe.
+func TestProxy_TLSServerName_DoesNotMutateDefaultTransport(t *testing.T) {
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	previous := dt.TLSClientConfig
+	dt.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	t.Cleanup(func() { dt.TLSClientConfig = previous })
+	shared := dt.TLSClientConfig
+
+	if _, err := proxy.New(proxy.Config{
+		UpstreamURL:   "https://upstream.test",
+		WriteDir:      t.TempDir(),
+		TLSServerName: "override.test",
+	}); err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if shared.ServerName != "" {
+		t.Fatalf("proxy.New mutated http.DefaultTransport's TLS config: ServerName = %q", shared.ServerName)
+	}
+}
+
 func TestProxy_TLSHostnameMismatch_FailsWithoutTLSServerName(t *testing.T) {
 	upstream := startTLSUpstream(t, "upstream.test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
