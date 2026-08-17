@@ -1,0 +1,21 @@
+version: "2"
+
+# The linter set is pinned here rather than left to the default so `make lint`
+# and the CI Lint job agree. Without it, each runs whatever the locally
+# installed golangci-lint considers standard, and a version skew between a
+# contributor's machine and CI shows up as an unreproducible failure.
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - errorlint # %v on an error breaks errors.Is/As downstream
+    - misspell # enforces the British spelling the prose conventions ask for
+    - unconvert
+  settings:
+    misspell:
+      locale: UK
+
+# bodyclose is deliberately absent: every HTTP client call in this repo is in a
+# test, and the ones that matter hand the response to a helper that closes it
+# from t.Cleanup. bodyclose cannot see through that, so it reports only false
+# positives here.

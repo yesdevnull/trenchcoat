@@ -1,0 +1,44 @@
+name: Release
+
+# Cutting a release is pushing a tag:
+#
+#   git tag -s v0.1.0 -m "v0.1.0"
+#   git push origin v0.1.0
+#
+# GoReleaser builds the matrix in .goreleaser.yaml, writes the archives and
+# checksums, and publishes them as a GitHub release. `go install` does not
+# depend on any of this -- it resolves tags through the module proxy -- so the
+# release exists for people who want a binary without a Go toolchain.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  goreleaser:
+    name: GoReleaser
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating the release and uploading its archives.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # GoReleaser derives the version from the tag and the changelog from
+          # the commits since the previous one; both need the full history.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

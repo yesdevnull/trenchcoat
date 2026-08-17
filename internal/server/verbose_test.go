@@ -268,7 +268,7 @@ func TestServe_VerboseLogging_DuplicateCoatsSameFileShowsPath(t *testing.T) {
 func TestServe_VerboseLogging_MethodNormalization(t *testing.T) {
 	// A coat with omitted method (defaults to GET) should match for file path
 	// lookup against the same coat with explicit "GET", since the matcher
-	// normalizes empty to GET.
+	// normalises empty to GET.
 	dir := t.TempDir()
 	coatFile := filepath.Join(dir, "method-norm.yaml")
 	if err := os.WriteFile(coatFile, []byte(`coats:
@@ -306,7 +306,7 @@ func TestServe_VerboseLogging_MethodNormalization(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 
 	logOutput := logBuf.String()
-	// File path should appear despite method being empty (normalized to GET).
+	// File path should appear despite method being empty (normalised to GET).
 	if !strings.Contains(logOutput, "file=") {
 		t.Errorf("expected 'file=' in log output for coat with omitted method, got:\n%s", logOutput)
 	}
