@@ -130,6 +130,11 @@ func (s *Server) startListener(addr string, tls bool, serve func(net.Listener) e
 	go func() {
 		if err := serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("server error", "error", err, "tls", tls)
+			// Serve failed after startListener reported success, so the caller
+			// is holding an address that will never be answered. Closing the
+			// listener turns a client hang into a connection refused, which is
+			// at least diagnosable.
+			_ = ln.Close()
 		}
 	}()
 

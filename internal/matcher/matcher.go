@@ -62,6 +62,12 @@ type MatchResult struct {
 // Matcher matches HTTP requests to coat definitions.
 type Matcher struct {
 	entries []*entry
+
+	// globCache memoises compiled header/query/body glob patterns. It belongs to
+	// the Matcher rather than the package so a hot reload discards the previous
+	// generation's patterns along with its coats; a package-level cache would
+	// accumulate every pattern ever loaded for the life of the process.
+	globCache sync.Map // pattern string -> *regexp.Regexp
 }
 
 // resolvedName returns the coat's name, or a fallback like "coat[N]" if unnamed.
@@ -257,13 +263,13 @@ func (m *Matcher) findCandidates(req *http.Request, getBody func() (string, erro
 		if !matchesURI(e, req.URL.Path) {
 			continue
 		}
-		if !matchesHeaders(e, req.Header) {
+		if !m.matchesHeaders(e, req.Header) {
 			continue
 		}
-		if !matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
+		if !m.matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
 			continue
 		}
-		if !matchesBody(e, getBody) {
+		if !m.matchesBody(e, getBody) {
 			continue
 		}
 
@@ -365,8 +371,8 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 			})
 			continue
 		}
-		if !matchesHeaders(e, req.Header) {
-			reason := diagnoseHeaderMismatch(e, req.Header)
+		if !m.matchesHeaders(e, req.Header) {
+			reason := m.diagnoseHeaderMismatch(e, req.Header)
 			mismatches = append(mismatches, Mismatch{
 				CoatName: name,
 				Reason:   reason,
@@ -374,8 +380,8 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 			})
 			continue
 		}
-		if !matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
-			reason := diagnoseQueryMismatch(e, req.URL.RawQuery, req.URL.Query())
+		if !m.matchesQuery(e, req.URL.RawQuery, req.URL.Query()) {
+			reason := m.diagnoseQueryMismatch(e, req.URL.RawQuery, req.URL.Query())
 			mismatches = append(mismatches, Mismatch{
 				CoatName: name,
 				Reason:   reason,
@@ -401,7 +407,7 @@ func (m *Matcher) MatchVerbose(req *http.Request) (*MatchResult, []Mismatch) {
 	return nil, mismatches
 }
 
-func diagnoseHeaderMismatch(e *entry, reqHeaders http.Header) string {
+func (m *Matcher) diagnoseHeaderMismatch(e *entry, reqHeaders http.Header) string {
 	for key, pattern := range e.coat.Request.Headers {
 		values := reqHeaders.Values(key)
 		if len(values) == 0 {
@@ -409,7 +415,7 @@ func diagnoseHeaderMismatch(e *entry, reqHeaders http.Header) string {
 		}
 		matched := false
 		for _, v := range values {
-			if globMatch(pattern, v) {
+			if m.globMatch(pattern, v) {
 				matched = true
 				break
 			}
@@ -421,7 +427,7 @@ func diagnoseHeaderMismatch(e *entry, reqHeaders http.Header) string {
 	return "header mismatch"
 }
 
-func diagnoseQueryMismatch(e *entry, rawQuery string, queryValues map[string][]string) string {
+func (m *Matcher) diagnoseQueryMismatch(e *entry, rawQuery string, queryValues map[string][]string) string {
 	q := e.coat.Request.Query
 	if q == nil {
 		return "query mismatch"
@@ -437,7 +443,7 @@ func diagnoseQueryMismatch(e *entry, rawQuery string, queryValues map[string][]s
 			}
 			matched := false
 			for _, v := range values {
-				if globMatch(pattern, v) {
+				if m.globMatch(pattern, v) {
 					matched = true
 					break
 				}
@@ -507,7 +513,7 @@ func matchesURI(e *entry, reqPath string) bool {
 	return false
 }
 
-func matchesHeaders(e *entry, reqHeaders http.Header) bool {
+func (m *Matcher) matchesHeaders(e *entry, reqHeaders http.Header) bool {
 	for key, pattern := range e.coat.Request.Headers {
 		values := reqHeaders.Values(key)
 		if len(values) == 0 {
@@ -516,7 +522,7 @@ func matchesHeaders(e *entry, reqHeaders http.Header) bool {
 		// Check if any header value matches the glob pattern.
 		matched := false
 		for _, v := range values {
-			if globMatch(pattern, v) {
+			if m.globMatch(pattern, v) {
 				matched = true
 				break
 			}
@@ -528,7 +534,7 @@ func matchesHeaders(e *entry, reqHeaders http.Header) bool {
 	return true
 }
 
-func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bool {
+func (m *Matcher) matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bool {
 	q := e.coat.Request.Query
 	if q == nil {
 		return true
@@ -548,7 +554,7 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 			}
 			matched := false
 			for _, v := range values {
-				if globMatch(pattern, v) {
+				if m.globMatch(pattern, v) {
 					matched = true
 					break
 				}
@@ -562,7 +568,7 @@ func matchesQuery(e *entry, rawQuery string, queryValues map[string][]string) bo
 	return true
 }
 
-func matchesBody(e *entry, getBody func() (string, error)) bool {
+func (m *Matcher) matchesBody(e *entry, getBody func() (string, error)) bool {
 	if e.coat.Request.Body == nil {
 		return true // No body constraint — matches anything.
 	}
@@ -572,7 +578,7 @@ func matchesBody(e *entry, getBody func() (string, error)) bool {
 	}
 	switch e.coat.Request.BodyMatch {
 	case "glob":
-		return globMatch(*e.coat.Request.Body, body)
+		return m.globMatch(*e.coat.Request.Body, body)
 	case "contains":
 		return strings.Contains(body, *e.coat.Request.Body)
 	case "regex":
@@ -585,10 +591,6 @@ func matchesBody(e *entry, getBody func() (string, error)) bool {
 	}
 }
 
-// globCache memoises compiled header/query/body glob patterns. Patterns come
-// from the loaded coats, so the set is small and fixed for a server's lifetime.
-var globCache sync.Map // pattern string -> *regexp.Regexp
-
 // globMatch performs glob matching on a string value, where * matches any
 // sequence of characters and ? matches any single character. Every other
 // character, '[' included, matches itself.
@@ -597,12 +599,12 @@ var globCache sync.Map // pattern string -> *regexp.Regexp
 // which are URI paths, so * deliberately spans '/': a coat asking for
 // Content-Type: "*" expects to match "application/json". URI globbing is
 // separate and stays segment-aware, via doublestar in matchesURI.
-func globMatch(pattern, value string) bool {
-	return compileGlob(pattern).MatchString(value)
+func (m *Matcher) globMatch(pattern, value string) bool {
+	return m.compileGlob(pattern).MatchString(value)
 }
 
-func compileGlob(pattern string) *regexp.Regexp {
-	if cached, ok := globCache.Load(pattern); ok {
+func (m *Matcher) compileGlob(pattern string) *regexp.Regexp {
+	if cached, ok := m.globCache.Load(pattern); ok {
 		return cached.(*regexp.Regexp)
 	}
 
@@ -624,6 +626,6 @@ func compileGlob(pattern string) *regexp.Regexp {
 	// Every component is either a metacharacter this function emitted or a
 	// QuoteMeta'd literal, so the result always compiles.
 	re := regexp.MustCompile(b.String())
-	globCache.Store(pattern, re)
+	m.globCache.Store(pattern, re)
 	return re
 }

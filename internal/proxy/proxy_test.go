@@ -679,49 +679,23 @@ func TestProxy_InvalidGzipBody(t *testing.T) {
 }
 
 func TestProxy_Filter_InvalidPattern(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer upstream.Close()
-
-	writeDir := t.TempDir()
-	p, err := proxy.New(proxy.Config{
-		UpstreamURL:  upstream.URL,
-		WriteDir:     writeDir,
+	// A filter that cannot compile used to be accepted, then rejected every
+	// request inside shouldCapture: one error logged per request, nothing
+	// captured, and --verbose reporting "captured=false" exactly as it would
+	// for a deliberate filter miss. Rejecting it at construction says so once,
+	// before anything is proxied.
+	_, err := proxy.New(proxy.Config{
+		UpstreamURL:  "http://127.0.0.1:1",
+		WriteDir:     t.TempDir(),
 		Filter:       "[invalid-pattern", // Malformed glob — unclosed bracket.
 		StripHeaders: []string{},
 		Dedupe:       "overwrite",
 	})
-	if err != nil {
-		t.Fatalf("failed to create proxy: %v", err)
+	if err == nil {
+		t.Fatal("expected proxy.New to reject an uncompilable --filter pattern")
 	}
-
-	_, err = p.Start("127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to start proxy: %v", err)
-	}
-	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
-
-	// Request should still succeed (proxied to upstream).
-	resp, err := httpClient.Get(p.URL() + "/test")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	p.WaitCaptures()
-
-	// No coat file should be captured — shouldCapture returns false on error.
-	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
-	if err != nil {
-		t.Fatalf("failed to glob: %v", err)
-	}
-	if len(files) != 0 {
-		t.Fatalf("expected no captured files with invalid filter, got %d", len(files))
+	if !strings.Contains(err.Error(), "[invalid-pattern") {
+		t.Fatalf("error should name the offending pattern, got: %v", err)
 	}
 }
 
@@ -1047,18 +1021,29 @@ func TestProxy_ConcurrentCapturesSameBaseName(t *testing.T) {
 	// and race to write it. Whichever wins, the file must be a complete coat --
 	// never one response's prefix followed by the other's tail.
 	//
-	// This holds today because os.WriteFile issues a single write syscall and
-	// the kernel serialises writes to a regular file. It is an invariant worth
-	// pinning: chunking the write, or switching to an io.Writer, would break it
-	// silently and leave unparseable fixtures behind.
+	// os.WriteFile is open(O_TRUNC) then write, and nothing pairs the truncate
+	// with the write: two of them on one path can interleave as A-open, B-open
+	// (truncating), A-write, B-write, leaving B's bytes over the head of A's.
+	// The writes must therefore be atomic with respect to each other, which is
+	// what writing to a temp file and renaming buys.
+	//
+	// Both responses are the same size and both requests are released together,
+	// so the two writes actually overlap. An earlier version of this test used
+	// 200 KiB against 64 B, which kept the captures tens of milliseconds apart
+	// and hid the race completely.
 	long := strings.Repeat("A", 200*1024)
-	short := strings.Repeat("B", 64)
+	short := strings.Repeat("B", 200*1024)
+
+	release := make(chan struct{})
+	var arrived sync.WaitGroup
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := short
 		if r.URL.Query().Get("page") == "1" {
 			body = long
 		}
+		arrived.Done()
+		<-release
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte(body))
@@ -1082,6 +1067,9 @@ func TestProxy_ConcurrentCapturesSameBaseName(t *testing.T) {
 	t.Cleanup(func() { _ = p.Shutdown(10 * time.Second) })
 
 	for range 40 {
+		release = make(chan struct{})
+		arrived.Add(2)
+
 		var wg sync.WaitGroup
 		for _, page := range []string{"1", "2"} {
 			wg.Add(1)
@@ -1095,6 +1083,12 @@ func TestProxy_ConcurrentCapturesSameBaseName(t *testing.T) {
 				_ = resp.Body.Close()
 			}(page)
 		}
+
+		// Both handlers are parked in the upstream; release them together so the
+		// two captures reach their writes at the same moment.
+		arrived.Wait()
+		close(release)
+
 		wg.Wait()
 		p.WaitCaptures()
 
@@ -1840,5 +1834,70 @@ func TestProxy_DropsHeadersNamedInConnection(t *testing.T) {
 
 	if got := resp.Header.Get("X-Internal-Backend"); got != "" {
 		t.Errorf("X-Internal-Backend was scoped to this hop by the upstream's Connection header but reached the client as %q", got)
+	}
+}
+
+func TestProxy_CaptureOmitsConnectionScopedHeaders(t *testing.T) {
+	// A header a peer scopes to this hop via Connection is withheld from the
+	// wire in both directions -- so it must not be recorded either. Capturing
+	// the request one makes it a replay match constraint for a header the
+	// upstream provably never saw; capturing the response one makes the mock
+	// serve a header the proxy itself refused to relay, and `Connection: close`
+	// then kills keep-alive for every replay client.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "X-Internal-Backend")
+		w.Header().Set("X-Internal-Backend", "pod-7")
+		w.Header().Set("Keep-Alive", "timeout=5")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":1}`))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	req, err := http.NewRequest("GET", p.URL()+"/hop", nil)
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
+	}
+	req.Header.Set("Connection", "keep-alive, X-Trace-Token")
+	req.Header.Set("X-Trace-Token", "secret")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	captured := readOnlyCoat(t, writeDir)
+
+	if got, ok := captured.Coats[0].Request.Headers["X-Trace-Token"]; ok {
+		t.Errorf("captured request headers include X-Trace-Token=%q, which the client scoped to this hop and the upstream never received", got)
+	}
+	for name := range captured.Coats[0].Response.Headers {
+		switch {
+		case strings.EqualFold(name, "Connection"),
+			strings.EqualFold(name, "Keep-Alive"),
+			strings.EqualFold(name, "X-Internal-Backend"):
+			t.Errorf("captured response headers include %s, which the proxy withheld from the client", name)
+		}
+	}
+	if got := captured.Coats[0].Response.Headers["Content-Type"]; got != "application/json" {
+		t.Errorf("Content-Type must still be captured, got %q", got)
 	}
 }
