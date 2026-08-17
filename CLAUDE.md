@@ -258,6 +258,24 @@ warning and return the body unrendered.
 | Glob  | `**` multi-segment | `/api/**/posts/*`         |
 | Regex | `~/` prefix       | `~/api/v1/users/\d+`       |
 
+A URI is treated as a glob when it contains `*`, `?` or `[`. `[` is included
+because the underlying matcher is `doublestar`, so `/items[abc]` is a character
+class, not the literal path — quote or avoid `[` in exact URIs.
+
+### Header, Query and Body Globs
+
+Header values, query values and `body_match: glob` patterns use a *different*
+glob dialect from URIs, because these values are not paths:
+
+| Metacharacter | Matches                                        |
+|---------------|------------------------------------------------|
+| `*`           | any sequence of characters, `/` and `\n` included |
+| `?`           | any single character                           |
+
+Everything else, `[` included, matches literally. So `Content-Type: "*"` matches
+`application/json`, and `redirect: "*"` matches `/home/dash` — unlike URI globs,
+where `*` stops at a path segment boundary.
+
 ### Match Precedence (highest to lowest)
 
 1. Exact URI + method + headers + query

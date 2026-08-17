@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -576,10 +575,45 @@ func matchesBody(e *entry, getBody func() (string, error)) bool {
 	}
 }
 
-// globMatch performs simple glob matching on a string value.
-// Uses path.Match which supports * (any characters within a segment) and ? (single character).
-// This is used for header values, query values, and body matching — not URI paths.
+// globCache memoises compiled header/query/body glob patterns. Patterns come
+// from the loaded coats, so the set is small and fixed for a server's lifetime.
+var globCache sync.Map // pattern string -> *regexp.Regexp
+
+// globMatch performs glob matching on a string value, where * matches any
+// sequence of characters and ? matches any single character. Every other
+// character, '[' included, matches itself.
+//
+// This is used for header values, query values and body matching — none of
+// which are URI paths, so * deliberately spans '/': a coat asking for
+// Content-Type: "*" expects to match "application/json". URI globbing is
+// separate and stays segment-aware, via doublestar in matchesURI.
 func globMatch(pattern, value string) bool {
-	matched, _ := path.Match(pattern, value)
-	return matched
+	return compileGlob(pattern).MatchString(value)
+}
+
+func compileGlob(pattern string) *regexp.Regexp {
+	if cached, ok := globCache.Load(pattern); ok {
+		return cached.(*regexp.Regexp)
+	}
+
+	// (?s) so '.' spans newlines, which multi-line bodies contain.
+	var b strings.Builder
+	b.WriteString("(?s)^")
+	for _, r := range pattern {
+		switch r {
+		case '*':
+			b.WriteString(".*")
+		case '?':
+			b.WriteString(".")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	b.WriteString("$")
+
+	// Every component is either a metacharacter this function emitted or a
+	// QuoteMeta'd literal, so the result always compiles.
+	re := regexp.MustCompile(b.String())
+	globCache.Store(pattern, re)
+	return re
 }

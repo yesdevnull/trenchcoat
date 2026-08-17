@@ -319,6 +319,118 @@ func TestMatch_HeaderGlob(t *testing.T) {
 	}
 }
 
+// Header, query and body values are not paths, so a glob '*' must span '/'.
+// Segment-aware globbing belongs to URI matching alone.
+
+func TestMatch_HeaderGlobMatchesAcrossSlashes(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "any-content-type",
+			Request: coat.Request{
+				Method:  "POST",
+				URI:     "/test",
+				Headers: map[string]string{"Content-Type": "*"},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "POST", "/test", map[string]string{
+		"Content-Type": "application/json",
+	})
+	if m.Match(req) == nil {
+		t.Fatal(`expected match — header glob "*" must match "application/json"`)
+	}
+}
+
+func TestMatch_QueryGlobMatchesAcrossSlashes(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "any-redirect",
+			Request: coat.Request{
+				Method: "GET",
+				URI:    "/login",
+				Query:  &coat.QueryField{Map: map[string]string{"redirect": "*"}},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/login?redirect=/home/dash", nil)
+	if m.Match(req) == nil {
+		t.Fatal(`expected match — query glob "*" must match "/home/dash"`)
+	}
+}
+
+func TestMatch_BodyGlobMatchesAcrossSlashes(t *testing.T) {
+	coats := []coat.Coat{
+		{
+			Name: "any-url-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/hook",
+				Body:      coat.StringPtr(`{"url": "*"}`),
+				BodyMatch: "glob",
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/hook", nil, `{"url": "https://example.com/a/b"}`)
+	if m.Match(req) == nil {
+		t.Fatal(`expected match — body glob "*" must match a URL containing slashes`)
+	}
+}
+
+func TestMatch_BodyGlobMatchesAcrossNewlines(t *testing.T) {
+	// Bodies are frequently multi-line; a glob that stops at '\n' would be as
+	// surprising as one that stops at '/'.
+	coats := []coat.Coat{
+		{
+			Name: "any-multiline-body",
+			Request: coat.Request{
+				Method:    "POST",
+				URI:       "/hook",
+				Body:      coat.StringPtr(`{*}`),
+				BodyMatch: "glob",
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequestWithBody(t, "POST", "/hook", nil, "{\n  \"a\": 1\n}")
+	if m.Match(req) == nil {
+		t.Fatal(`expected match — body glob "*" must span newlines`)
+	}
+}
+
+func TestMatch_HeaderGlobBracketIsLiteral(t *testing.T) {
+	// path.Match returned ErrBadPattern for an unclosed '[' and the error was
+	// discarded, so such a coat could never match anything. With only * and ?
+	// as metacharacters, '[' is an ordinary character.
+	coats := []coat.Coat{
+		{
+			Name: "bracket-token",
+			Request: coat.Request{
+				Method:  "GET",
+				URI:     "/test",
+				Headers: map[string]string{"X-Token": "abc[*"},
+			},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	req := newRequest(t, "GET", "/test", map[string]string{"X-Token": "abc[def"})
+	if m.Match(req) == nil {
+		t.Fatal(`expected match — "abc[*" should match the literal prefix "abc["`)
+	}
+}
+
 // --- Query matching (map form) ---
 
 func TestMatch_QueryMap(t *testing.T) {
