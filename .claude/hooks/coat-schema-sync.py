@@ -51,22 +51,18 @@ def git(repo: str, *args: str) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
-def dirty_paths(repo_root: str) -> set[str]:
-    """Repo-relative paths with uncommitted changes."""
-    porcelain = git(repo_root, "status", "--porcelain")
-    if porcelain is None:
-        return set()
+def schema_is_dirty(repo_root: str) -> bool:
+    """True when the schema has uncommitted changes, staged or not.
 
-    paths = set()
-    for line in porcelain.splitlines():
-        if not line.strip():
-            continue
-        # Format is "XY <path>", and renames appear as "old -> new".
-        path = line[3:].strip()
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        paths.add(path.strip('"'))
-    return paths
+    Limiting status to the one pathspec means git answers the question directly,
+    with no porcelain output to hand-parse -- rename arrows and C-quoted names
+    included. --no-optional-locks keeps this from refreshing (and locking) the
+    index behind a git command the human is running at the same time.
+    """
+    porcelain = git(
+        repo_root, "--no-optional-locks", "status", "--porcelain", "--", SCHEMA
+    )
+    return bool(porcelain and porcelain.strip())
 
 
 def main() -> int:
@@ -93,7 +89,7 @@ def main() -> int:
     if relative not in WATCHED:
         return 0
 
-    if SCHEMA in dirty_paths(repo_root):
+    if schema_is_dirty(repo_root):
         return 0
 
     print(

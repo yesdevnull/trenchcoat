@@ -15,6 +15,7 @@ Test with: python3 .claude/hooks/test_hooks.py
 
 from __future__ import annotations  # hooks may run under macOS system Python 3.9
 
+import functools
 import json
 import os
 import shutil
@@ -24,6 +25,7 @@ import sys
 FORMATTERS = ("gofmt", "goimports")
 
 
+@functools.lru_cache(maxsize=1)
 def gopath_bin() -> str:
     """Best effort GOPATH/bin, without assuming the default GOPATH.
 
@@ -44,9 +46,12 @@ def gopath_bin() -> str:
                 gopath = result.stdout.strip()
         except OSError:
             gopath = ""
-    if not gopath:
-        gopath = os.path.expanduser(os.path.join("~", "go"))
-    return os.path.join(gopath, "bin")
+    # GOPATH may be an os.pathsep-separated list; `go install` writes binaries
+    # into the first entry, so that is the only one worth searching.
+    root = next((entry for entry in gopath.split(os.pathsep) if entry), "")
+    if not root:
+        root = os.path.expanduser(os.path.join("~", "go"))
+    return os.path.join(root, "bin")
 
 
 def find_formatter(name: str) -> str | None:
@@ -77,12 +82,17 @@ def main() -> int:
         formatter = find_formatter(name)
         if formatter is None:
             continue
-        subprocess.run(
-            [formatter, "-w", path],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                [formatter, "-w", path],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            # The binary went away or is not really executable. Same contract as
+            # a formatter that was never installed: skip it, let CI backstop.
+            continue
 
     return 0
 
