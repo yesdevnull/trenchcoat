@@ -13,6 +13,8 @@ a formatter is not worth interrupting the session over, and CI still backstops.
 Test with: python3 .claude/hooks/test_hooks.py
 """
 
+from __future__ import annotations  # hooks may run under macOS system Python 3.9
+
 import json
 import os
 import shutil
@@ -20,6 +22,31 @@ import subprocess
 import sys
 
 FORMATTERS = ("gofmt", "goimports")
+
+
+def gopath_bin() -> str:
+    """Best effort GOPATH/bin, without assuming the default GOPATH.
+
+    CI images and devcontainers routinely relocate GOPATH, so ~/go/bin is a
+    guess of last resort rather than the answer. `go env` is consulted only
+    when the environment does not already say.
+    """
+    gopath = os.environ.get("GOPATH", "")
+    if not gopath:
+        try:
+            result = subprocess.run(
+                ["go", "env", "GOPATH"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                gopath = result.stdout.strip()
+        except OSError:
+            gopath = ""
+    if not gopath:
+        gopath = os.path.expanduser(os.path.join("~", "go"))
+    return os.path.join(gopath, "bin")
 
 
 def find_formatter(name: str) -> str | None:
@@ -32,7 +59,7 @@ def find_formatter(name: str) -> str | None:
     found = shutil.which(name)
     if found:
         return found
-    fallback = os.path.expanduser(os.path.join("~", "go", "bin", name))
+    fallback = os.path.join(gopath_bin(), name)
     return fallback if os.access(fallback, os.X_OK) else None
 
 
