@@ -91,7 +91,7 @@ func New(coats []coat.Coat) *Matcher {
 			}
 			// Invalid regex: keep the entry (for diagnostics) but leave e.regex
 			// nil so matchesURI will never match it.
-		} else if strings.ContainsAny(c.Request.URI, "*?[") {
+		} else if strings.ContainsAny(c.Request.URI, coat.GlobMetacharacters) {
 			e.uriType = uriGlob
 			// Compute literal prefix length (characters before first wildcard).
 			for _, ch := range c.Request.URI {
