@@ -221,11 +221,7 @@ func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
 
 	// Release everything before asserting, so a failure cannot hang the suite.
 	close(parked)
-	fifo, ferr := os.OpenFile(coatPath, os.O_RDONLY, 0)
-	if ferr == nil {
-		_, _ = io.Copy(io.Discard, fifo)
-		_ = fifo.Close()
-	}
+	drainFifo(t, coatPath, 30*time.Second)
 	waitOrFail(t, &parkedRequest, 30*time.Second, "the parked request to finish")
 
 	// The capture this test deliberately abandoned is now unblocked and about to

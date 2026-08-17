@@ -143,12 +143,7 @@ func TestProxy_CaptureConcurrencyIsBounded(t *testing.T) {
 	// -- a FIFO with no writer attached yet -- so closing it would leave the
 	// capture still waiting for a reader that has already gone.
 	for _, path := range blockedPaths {
-		fifo, err := os.OpenFile(path, os.O_RDONLY, 0)
-		if err != nil {
-			t.Fatalf("failed to open fifo %s for reading: %v", path, err)
-		}
-		_, _ = io.Copy(io.Discard, fifo)
-		_ = fifo.Close()
+		drainFifo(t, path, 30*time.Second)
 	}
 	close(drained)
 
@@ -159,5 +154,36 @@ func TestProxy_CaptureConcurrencyIsBounded(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("%s never appeared after the blocked captures were released: %v", filepath.Base(path), err)
 		}
+	}
+}
+
+// drainFifo completes the rendezvous for a capture parked in open-for-write at
+// path, then reads what it writes.
+//
+// The open has to block -- an O_NONBLOCK reader on a FIFO with no writer
+// attached reads EOF straight away, so closing it would leave the capture
+// waiting for a reader that has already gone. A blocking open with nothing
+// parked there waits forever, though, which turns a broken assumption into a
+// hung package rather than a failed test: if the capture never arrives, this
+// says so instead.
+func drainFifo(t *testing.T, path string, within time.Duration) {
+	t.Helper()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fifo, err := os.OpenFile(path, os.O_RDONLY, 0)
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, fifo)
+		_ = fifo.Close()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(within):
+		t.Fatalf("no capture was parked writing %s after %s; the blocking path is not where this test expects it",
+			filepath.Base(path), within)
 	}
 }
