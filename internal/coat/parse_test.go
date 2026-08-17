@@ -652,42 +652,56 @@ func TestParseFile_EmptyFileIsNotAnError(t *testing.T) {
 	}
 }
 
-func TestParseFile_RejectsExtensionKeysInJSON(t *testing.T) {
-	// The x- allowance is scoped to YAML, where it exists to carry an anchor.
-	// JSON has no anchors and so no use for it, and Extensions is json:"-" so a
-	// JSON x- key is an unknown field like any other. Pinned because the
-	// shipped schema and the documentation have both claimed otherwise.
+func TestParseFile_RejectsTopLevelExtensionKeys(t *testing.T) {
+	// No top-level key outside the schema is accepted, in either format: an
+	// "x-" prefix is no exemption. A holder key for a YAML anchor is the one
+	// tempting reason to want one, and the inline anchor covered by
+	// TestParseFile_SharesResponseDefaultsViaInlineAnchor serves that instead.
 	dir := t.TempDir()
-	path := filepath.Join(dir, "ext.json")
-	body := `{"x-defaults":{"code":200},"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]}`
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-		t.Fatal(err)
+	cases := map[string]string{
+		"ext.yaml": "x-defaults:\n  code: 200\ncoats:\n  - name: a\n    request:\n      uri: /a\n    response:\n      code: 200\n",
+		"ext.json": `{"x-defaults":{"code":200},"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]}`,
 	}
+	for name, body := range cases {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
 
-	if _, err := coat.ParseFile(path); err == nil {
-		t.Fatal("expected a JSON x- key to be rejected as an unknown field")
-	} else if !strings.Contains(err.Error(), "x-defaults") {
-		t.Fatalf("parse error should name the offending field, got: %v", err)
+		if _, err := coat.ParseFile(path); err == nil {
+			t.Errorf("%s: expected a top-level x- key to be rejected as an unknown field", name)
+		} else if !strings.Contains(err.Error(), "x-defaults") {
+			t.Errorf("%s: parse error should name the offending field, got: %v", name, err)
+		}
 	}
 }
 
-func TestParseFile_AllowsTopLevelExtensionKeys(t *testing.T) {
-	// Strict decoding must not break the anchor-holder idiom: a top-level x-
-	// key exists purely to carry a YAML anchor that coats then merge in. Merge
-	// keys always worked; it was the key holding the anchor that stopped
-	// parsing. Any other unknown key is still an error.
+func TestParseFile_SharesResponseDefaultsViaInlineAnchor(t *testing.T) {
+	// Anchoring on the first coat that uses the values, rather than on a
+	// top-level holder key, shares response defaults without any key outside
+	// the schema. This is the supported way to avoid repeating a response, so
+	// it asserts the merged values -- not merely that the file parses.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "anchors.yaml")
-	body := `x-defaults: &defaults
-  code: 200
-  headers:
-    Content-Type: application/json
-coats:
-  - name: uses-anchor
+	body := `coats:
+  - name: first
     request:
-      uri: /api/users
+      uri: /a
+    response: &defaults
+      code: 200
+      headers:
+        Content-Type: application/json
+  - name: second
+    request:
+      uri: /b
     response:
       <<: *defaults
+  - name: third
+    request:
+      uri: /c
+    response:
+      <<: *defaults
+      code: 201
 `
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
@@ -695,12 +709,19 @@ coats:
 
 	f, err := coat.ParseFile(path)
 	if err != nil {
-		t.Fatalf("a top-level x- key holding an anchor must parse, got: %v", err)
+		t.Fatalf("merging an inline anchor must parse, got: %v", err)
 	}
-	if len(f.Coats) != 1 {
-		t.Fatalf("expected 1 coat, got %d", len(f.Coats))
+	if len(f.Coats) != 3 {
+		t.Fatalf("expected 3 coats, got %d", len(f.Coats))
 	}
-	if got := f.Coats[0].Response.Code; got != 200 {
-		t.Fatalf("merged anchor should set code 200, got %d", got)
+
+	wantCodes := []int{200, 200, 201}
+	for i, want := range wantCodes {
+		if got := f.Coats[i].Response.Code; got != want {
+			t.Errorf("coat %d: expected code %d, got %d", i, want, got)
+		}
+		if got := f.Coats[i].Response.Headers["Content-Type"]; got != "application/json" {
+			t.Errorf("coat %d: expected merged Content-Type application/json, got %q", i, got)
+		}
 	}
 }
