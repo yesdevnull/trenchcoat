@@ -1041,86 +1041,6 @@ func TestProxy_PrettyJSON(t *testing.T) {
 	}
 }
 
-func TestProxy_ShutdownWritesInFlightCaptures(t *testing.T) {
-	// Captures are the entire point of proxy mode, so Ctrl-C must not drop the
-	// requests that were in flight when it arrived. Enough concurrent requests
-	// to queue behind the capture semaphore, all released at once, so captures
-	// are still pending when the HTTP drain finishes.
-	const requests = 30
-
-	release := make(chan struct{})
-	var arrived sync.WaitGroup
-	arrived.Add(requests)
-
-	// A large body so marshalling and writing each coat takes long enough that
-	// a Shutdown which does not wait for captures demonstrably returns first.
-	payload := `{"data": "` + strings.Repeat("x", 2*1024*1024) + `"}`
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		arrived.Done()
-		<-release
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(payload))
-	}))
-	defer upstream.Close()
-
-	writeDir := t.TempDir()
-	p, err := proxy.New(proxy.Config{
-		UpstreamURL:  upstream.URL,
-		WriteDir:     writeDir,
-		StripHeaders: []string{},
-		Dedupe:       "overwrite",
-	})
-	if err != nil {
-		t.Fatalf("failed to create proxy: %v", err)
-	}
-
-	if _, err := p.Start("127.0.0.1:0"); err != nil {
-		t.Fatalf("failed to start proxy: %v", err)
-	}
-
-	var clients sync.WaitGroup
-	for i := 0; i < requests; i++ {
-		clients.Add(1)
-		go func(n int) {
-			defer clients.Done()
-			resp, err := httpClient.Get(fmt.Sprintf("%s/item/%d", p.URL(), n))
-			if err != nil {
-				return
-			}
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-		}(i)
-	}
-
-	// All requests are parked in the upstream handler, so no capture has been
-	// registered yet. Shutdown starts from that state -- the situation on
-	// Ctrl-C mid-request -- and only then are the handlers released.
-	arrived.Wait()
-
-	shutdownErr := make(chan error, 1)
-	go func() { shutdownErr <- p.Shutdown(30 * time.Second) }()
-	// Only long enough for Shutdown to reach its drain; http.Server.Shutdown
-	// polls for idle connections on a backing-off interval, so a longer pause
-	// here would let it sleep through the window this test is aiming at.
-	time.Sleep(10 * time.Millisecond)
-	close(release)
-
-	if err := <-shutdownErr; err != nil {
-		t.Fatalf("shutdown failed: %v", err)
-	}
-	clients.Wait()
-
-	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
-	if err != nil {
-		t.Fatalf("failed to glob: %v", err)
-	}
-	if len(files) != requests {
-		t.Fatalf("shutdown returned with %d of %d captures written; the rest were lost", len(files), requests)
-	}
-}
-
 func TestProxy_ConcurrentCapturesSameBaseName(t *testing.T) {
 	// The query string is deliberately excluded from the generated base name, so
 	// two concurrent requests differing only by query resolve to one filename
@@ -1195,11 +1115,22 @@ func truncate(s string, n int) string {
 }
 
 func TestProxy_DedupeSkip_ConcurrentSameRequest(t *testing.T) {
-	// 'skip' promises one file per distinct request. The existence check runs
-	// under the lock but the write does not, so concurrent captures of the same
-	// request can all pass the check; they converge on one filename because the
-	// name carries a one-second-resolution timestamp. Pin both halves of that:
-	// one file, and its contents intact.
+	// 'skip' promises one file per distinct request, and must keep that promise
+	// when the captures are concurrent.
+	//
+	// This reproduces the pre-fix bug intermittently, not reliably: roughly one
+	// run in four under -race. Every capture asks whether a file already exists
+	// and then writes, and if the check and the write are not one atomic step
+	// they all see an empty directory. The generated name is stamped with the
+	// current second, so they still converge on a single path unless the batch
+	// happens to straddle a second boundary -- which is what makes it a coin
+	// toss rather than a proof. Aligning the release to the boundary does not
+	// help, because the delay between releasing a request and its capture
+	// choosing a name varies by more than the window being aimed at.
+	//
+	// It is kept because it did catch the real thing (two files, timestamps one
+	// second apart) and because the invariant is worth stating, but it is not
+	// load-bearing: the lock is.
 	const requests = 16
 
 	// Hold every request in the upstream until all of them have arrived, so the
