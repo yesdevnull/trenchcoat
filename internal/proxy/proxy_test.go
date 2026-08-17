@@ -20,6 +20,7 @@ import (
 
 	"github.com/yesdevnull/trenchcoat/internal/coat"
 	"github.com/yesdevnull/trenchcoat/internal/proxy"
+	"github.com/yesdevnull/trenchcoat/internal/server"
 )
 
 // httpClient is a shared test client with an explicit timeout to prevent
@@ -1038,6 +1039,150 @@ func TestProxy_PrettyJSON(t *testing.T) {
 	if body != pretty.String() {
 		t.Fatalf("expected pretty-printed JSON body:\n%s\n\ngot:\n%s\n\nfull coat file:\n%s", pretty.String(), body, contentStr)
 	}
+}
+
+func TestProxy_PrettyJSON_DropsContentLength(t *testing.T) {
+	// Pretty-printing changes the body length, so the upstream's Content-Length
+	// no longer describes the captured body and must not be recorded.
+	compactJSON := `{"users":[{"id":1,"name":"alice"},{"id":2,"name":"bob"}]}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(compactJSON)))
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(compactJSON))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		PrettyJSON:   true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/users")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	captured := readOnlyCoat(t, writeDir)
+	for k, v := range captured.Coats[0].Response.Headers {
+		if strings.EqualFold(k, "Content-Length") {
+			t.Fatalf("captured coat kept Content-Length %q, which no longer matches the pretty-printed body of %d bytes",
+				v, len(captured.Coats[0].Response.Body))
+		}
+	}
+}
+
+func TestProxy_PrettyJSON_CapturedCoatReplays(t *testing.T) {
+	// The point of capturing is replay: serving the captured coat must return
+	// the whole pretty-printed body, not a body truncated to a stale length.
+	compactJSON := `{"users":[{"id":1,"name":"alice"},{"id":2,"name":"bob"}]}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(compactJSON)))
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(compactJSON))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		PrettyJSON:   true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/users")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("expected a captured coat file, glob err %v, files %v", err, files)
+	}
+
+	loaded, errs := coat.LoadPaths([]string{files[0]})
+	if len(errs) > 0 {
+		t.Fatalf("captured coat did not load: %v", errs)
+	}
+
+	mock := server.New(loaded, server.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	addr, err := mock.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock: %v", err)
+	}
+	t.Cleanup(func() { _ = mock.Shutdown(5 * time.Second) })
+
+	replayed, err := httpClient.Get("http://" + addr + "/api/users")
+	if err != nil {
+		t.Fatalf("replay request failed: %v", err)
+	}
+	defer func() { _ = replayed.Body.Close() }()
+
+	body, err := io.ReadAll(replayed.Body)
+	if err != nil {
+		t.Fatalf("reading replayed body failed: %v", err)
+	}
+
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, []byte(compactJSON), "", "  "); err != nil {
+		t.Fatalf("failed to indent JSON: %v", err)
+	}
+	if string(body) != pretty.String() {
+		t.Fatalf("replaying the captured coat returned %d bytes, want the %d-byte pretty body\ngot:  %q\nwant: %q",
+			len(body), pretty.Len(), string(body), pretty.String())
+	}
+}
+
+// readOnlyCoat parses the single captured coat file in dir, failing if there is
+// not exactly one.
+func readOnlyCoat(t *testing.T, dir string) coat.File {
+	t.Helper()
+
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected exactly one captured coat file, got %v", files)
+	}
+
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", files[0], err)
+	}
+
+	var parsed coat.File
+	if err := yaml.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal %s: %v", files[0], err)
+	}
+	return parsed
 }
 
 func TestProxy_PrettyJSON_NonJSON(t *testing.T) {
