@@ -13,14 +13,12 @@ test:
 	go test -v -count=1 -race ./...
 
 coverage:
-	go test -v -count=1 -race -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report written to coverage.html"
+	./scripts/coverage-report.sh --html
 
 lint:
 	@which golangci-lint > /dev/null 2>&1 || { echo "golangci-lint not installed"; exit 1; }
 	golangci-lint run ./...
 
 clean:
-	rm -f $(BINARY_NAME) coverage.out coverage.html
+	rm -f $(BINARY_NAME) coverage.out coverage.html coverage-test.log
 	go clean -testcache
