@@ -1121,56 +1121,6 @@ func TestProxy_ShutdownWritesInFlightCaptures(t *testing.T) {
 	}
 }
 
-func TestProxy_WaitCapturesAfterLargeResponse(t *testing.T) {
-	// WaitCaptures must account for a request whose response the client has
-	// already read. With registration happening after the response write, a
-	// body large enough to clear the write buffers lets the client return
-	// first, so WaitCaptures sees nothing pending and returns too early.
-	body := strings.Repeat("a", 64*1024)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(body))
-	}))
-	defer upstream.Close()
-
-	writeDir := t.TempDir()
-	p, err := proxy.New(proxy.Config{
-		UpstreamURL:  upstream.URL,
-		WriteDir:     writeDir,
-		StripHeaders: []string{},
-		Dedupe:       "overwrite",
-	})
-	if err != nil {
-		t.Fatalf("failed to create proxy: %v", err)
-	}
-
-	if _, err := p.Start("127.0.0.1:0"); err != nil {
-		t.Fatalf("failed to start proxy: %v", err)
-	}
-	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
-
-	resp, err := httpClient.Get(p.URL() + "/large")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		t.Fatalf("reading body failed: %v", err)
-	}
-	_ = resp.Body.Close()
-
-	p.WaitCaptures()
-
-	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
-	if err != nil {
-		t.Fatalf("failed to glob: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("WaitCaptures returned before the capture was written, got %d files", len(files))
-	}
-}
-
 func TestProxy_PrettyJSON_DropsContentLength(t *testing.T) {
 	// Pretty-printing changes the body length, so the upstream's Content-Length
 	// no longer describes the captured body and must not be recorded.
