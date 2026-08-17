@@ -1,5 +1,10 @@
 name: CI
 
+# paths-ignore skips the whole workflow, jobs included, for a docs-only change.
+# That is only safe while no job here is a required status check on main: a
+# required check that never runs leaves the pull request permanently pending.
+# If branch protection is ever turned on, drop these filters rather than trying
+# to make a skipped job report success.
 on:
   pull_request:
     paths-ignore:
@@ -16,6 +21,25 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same ref makes the run in flight irrelevant. Pull request
+# runs are cancelled outright; main is left alone so every commit on the
+# default branch keeps its own verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Tool versions are pinned rather than installed with @latest so a run is
+# reproducible and an upstream release cannot break an unrelated pull request.
+# Renovate keeps them current via the customManager in renovate.json, which
+# reads the annotation comment above each one.
+env:
+  # renovate: datasource=go depName=golang.org/x/vuln
+  GOVULNCHECK_VERSION: "v1.7.0"
+  # renovate: datasource=go depName=golang.org/x/tools
+  GOIMPORTS_VERSION: "v0.49.0"
+  # renovate: datasource=github-releases depName=golangci/golangci-lint
+  GOLANGCI_LINT_VERSION: "v2.12.2"
 
 jobs:
   test:
@@ -60,7 +84,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
 
   vet:
     name: Vet & Static Analysis
@@ -89,8 +113,8 @@ jobs:
 
       - name: Check for vulnerable dependencies
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./... || echo "::warning::govulncheck found vulnerabilities (see above)"
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          govulncheck ./...
 
   format:
     name: Format
@@ -116,7 +140,7 @@ jobs:
 
       - name: Check goimports
         run: |
-          go install golang.org/x/tools/cmd/goimports@latest
+          go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
           unformatted=$(goimports -l .)
           if [ -n "$unformatted" ]; then
             echo "::error::The following files have incorrect imports:"
@@ -126,16 +150,57 @@ jobs:
             exit 1
           fi
 
+  hooks:
+    name: Claude Code Hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # 3.9 is the floor the hooks are written against, because macOS ships
+      # 3.9.6 as /usr/bin/python3. Testing on a newer interpreter would let a
+      # 3.10+ construct through.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+
+      - name: Install goimports
+        run: go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
+
+      - name: Run hook tests
+        run: python3 .claude/hooks/test_hooks.py
+
+  goreleaser-config:
+    name: GoReleaser Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Catches deprecated configuration before a tag is pushed, when the only
+      # way to find out is a failed release.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: check
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, lint, vet, format]
+    needs: [test, lint, vet, format, hooks, goreleaser-config]
     strategy:
       matrix:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # git describe needs the tags, which a shallow clone does not fetch.
+          # Without this the stamped version is always a bare commit hash.
+          fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

@@ -758,7 +758,7 @@ func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) (stri
 			p.logger.Error("name template execution failed, using default", "error", err)
 			base = fmt.Sprintf("%s_%s_%d", method, sanitised, status)
 		} else {
-			// Sanitize template output to prevent directory traversal and
+			// Sanitise template output to prevent directory traversal and
 			// invalid filenames. Strip path separators and re-apply the
 			// same character allowlist used for URL paths.
 			rendered := buf.String()

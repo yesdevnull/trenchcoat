@@ -636,7 +636,7 @@ func TestBinary_ProxyThenServe(t *testing.T) {
 		t.Fatalf("expected serve response 200, got %d", serveResp.StatusCode)
 	}
 
-	// Normalize trailing whitespace from YAML block scalar round-trip.
+	// Normalise trailing whitespace from YAML block scalar round-trip.
 	want := strings.TrimRight(string(capturedBody), "\n")
 	got := strings.TrimRight(string(serveBody), "\n")
 	if got != want {
