@@ -224,7 +224,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// The coat matched but defines nothing to send. Reporting "no matching
 		// coat" here blames the request for a defect in the coat, and names
 		// nothing, so there is no way to find the culprit. Validation rejects
-		// this, but the programmatic API does not validate.
+		// this, and so does WithCoatFile, which loads through LoadPaths -- but
+		// WithCoat and WithCoats take a Coat as given.
 		s.writeCoatHasNoResponse(w, r, result.Name, start)
 		return
 	}

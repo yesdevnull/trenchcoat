@@ -254,13 +254,19 @@ warning and return the body unrendered.
 | Mode  | Syntax            | Example                    |
 |-------|-------------------|----------------------------|
 | Exact | Plain string      | `/api/v1/users`            |
-| Glob  | Contains `*`/?/`**` | `/api/v1/users/*`        |
+| Glob  | Contains `*`, `?`, `[` or `**` | `/api/v1/users/*` |
 | Glob  | `**` multi-segment | `/api/**/posts/*`         |
 | Regex | `~/` prefix       | `~/api/v1/users/\d+`       |
 
+Regex URIs are anchored as a group — `^(?:pattern)$` — so a top-level
+alternation is bounded as a whole: `~/users|/accounts` matches `/users` and
+`/accounts`, and neither `/users/extra` nor `/x/y/accounts`.
+
 A URI is treated as a glob when it contains `*`, `?` or `[`. `[` is included
 because the underlying matcher is `doublestar`, so `/items[abc]` is a character
-class, not the literal path — quote or avoid `[` in exact URIs.
+class rather than a literal path. To match a literal bracket, escape it with a
+backslash — `/items\[abc\]` — noting that the URI still counts as a glob and
+is matched as one; there is no way to make a bracketed URI an exact match.
 
 ### Header, Query and Body Globs
 
@@ -292,8 +298,20 @@ body presence.
 Requests that match no coat, and requests hitting an exhausted `once` sequence,
 both return **404** with a JSON body (`{"error": ...}`).
 
+A request that *matches* a coat defining neither `response` nor `responses`
+returns **500** naming the coat, and logs at `ERROR`: that is a fault in the
+coat rather than a request that found no match. Validation and `WithCoatFile`
+both reject such a coat, so this is only reachable via `WithCoat`/`WithCoats`.
+
 ### Validation Rules
 
+- Coat files are parsed **strictly**: an unknown YAML or JSON key is a parse
+  error naming the field, not a silently ignored one. Top-level keys beginning
+  `x-` are the one exception, so a file can hold a YAML anchor for coats to
+  merge in
+- A JSON coat file must contain exactly one document; anything after it is an
+  error
+- A URI containing `*`, `?` or `[` must be a valid `doublestar` pattern
 - `request.uri` is required
 - Must have exactly one of `response` (singular) or `responses` (plural)
 - `body` and `body_file` are mutually exclusive (in both singular and plural forms)
@@ -337,6 +355,14 @@ hook warns when you forget.
   and `Accept-Language`. Recording them would tie a coat to the tool that
   captured it — a capture taken with curl would 404 for every other client.
   `Content-Type` and custom headers such as `X-Api-Key` are still captured.
+- Headers a peer scopes to one hop by naming them in its `Connection` header
+  are withheld from the wire in both directions, and are not captured either —
+  a coat recording them would demand, at replay, a header the upstream never
+  saw
+- Captured `request.uri` is the **decoded** path, so `/files/dir%2Ffile` and
+  `/files/dir/file` produce one coat even though they are different requests
+  upstream; with `--dedupe skip` the second is discarded. Forwarding preserves
+  the encoding — it is only the capture that collapses
 - `Content-Length` is never recorded in a captured **response** either: the
   captured body differs from the upstream body whenever it is pretty-printed or
   decompressed, and `net/http` derives the correct length when serving

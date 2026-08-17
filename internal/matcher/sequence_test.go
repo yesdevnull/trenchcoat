@@ -214,11 +214,11 @@ func TestMatch_SingularResponse(t *testing.T) {
 }
 
 func TestResolveSequence_UnknownValueCycles(t *testing.T) {
-	// resolveSequence special-cases "once" and "cycle" and had no fallback, so
-	// any other value -- "Once" with the wrong case is the obvious way in --
-	// returned the raw counter and let it run past the end of Responses. The
-	// server then indexes that slice and panics. LoadPaths validates the value,
-	// but WithCoat/WithCoats do not, so a Go test can reach it.
+	// Anything that is not "once" must cycle. An unrecognised value -- "Once"
+	// with the wrong case is the obvious way in -- must not walk the counter past
+	// the end of Responses, which the server then indexes and panics on.
+	// LoadPaths validates the value, but WithCoat/WithCoats do not, so a Go test
+	// can reach it.
 	coats := []coat.Coat{
 		{
 			Name:      "bad-sequence",

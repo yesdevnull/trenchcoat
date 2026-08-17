@@ -435,9 +435,8 @@ func TestMatch_BodyGlobMatchesAcrossNewlines(t *testing.T) {
 }
 
 func TestMatch_HeaderGlobBracketIsLiteral(t *testing.T) {
-	// path.Match returned ErrBadPattern for an unclosed '[' and the error was
-	// discarded, so such a coat could never match anything. With only * and ?
-	// as metacharacters, '[' is an ordinary character.
+	// With only * and ? as metacharacters, '[' is an ordinary character, so a
+	// pattern containing one matches it literally rather than never matching.
 	coats := []coat.Coat{
 		{
 			Name: "bracket-token",
@@ -1510,10 +1509,9 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 }
 
 func TestMatch_GlobPrecedence_BracketIsNotLiteralPrefix(t *testing.T) {
-	// '[' makes a URI a glob, but the literal-prefix calculation stopped only at
-	// '*' and '?'. A bracketed pattern was therefore credited with a literal
-	// prefix running to the end of the string, and outranked a glob whose
-	// literal prefix is genuinely longer.
+	// Glob precedence is decided by literal prefix length, and a character class
+	// is not literal: counting it as such credits a pattern with more literal
+	// prefix than it has.
 	//
 	// "/api/[ij]tems/detail" has a real literal prefix of "/api/" (5), while
 	// "/api/items/*" has "/api/items/" (11), so the latter is the more specific
