@@ -274,8 +274,16 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Forward request to upstream.
+	//
+	// Join the escaped forms as well as the decoded ones. URL.String() prefers
+	// RawPath when it is a valid encoding of Path, so without this an encoded
+	// separator in the client's path is handed upstream as a real one --
+	// /seg%2Fment arrives as /seg/ment and hits a different route than the
+	// client asked for. A capture tool that rewrites the request in transit is
+	// recording something that never happened.
 	upstreamURL := *p.upstream
 	upstreamURL.Path = singleJoiningSlash(upstreamURL.Path, r.URL.Path)
+	upstreamURL.RawPath = singleJoiningSlash(p.upstream.EscapedPath(), r.URL.EscapedPath())
 	upstreamURL.RawQuery = r.URL.RawQuery
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), bytes.NewReader(reqBody))

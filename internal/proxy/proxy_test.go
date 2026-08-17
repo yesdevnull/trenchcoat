@@ -1653,3 +1653,45 @@ func TestProxyShutdownRespectsTimeoutWithPendingCaptures(t *testing.T) {
 		t.Fatal("Shutdown did not return within timeout")
 	}
 }
+
+func TestProxy_PreservesPercentEncodedPath(t *testing.T) {
+	// The proxy rebuilt the upstream URL from the decoded r.URL.Path, so an
+	// encoded separator was handed to the upstream as a real one and reached a
+	// different route than the client asked for. A capture tool that quietly
+	// rewrites the request is recording something that never happened.
+	seen := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.RequestURI
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     t.TempDir(),
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/seg%2Fment/tail")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	got := <-seen
+	if got != "/seg%2Fment/tail" {
+		t.Fatalf("upstream saw %q, want %q -- the encoded separator was decoded in transit", got, "/seg%2Fment/tail")
+	}
+}
