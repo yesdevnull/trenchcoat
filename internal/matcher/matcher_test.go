@@ -1603,7 +1603,7 @@ func TestMatchVerbose_NearMissDiagnostics(t *testing.T) {
 				Response: &coat.Response{Code: 200},
 			},
 			request: newRequest(t, "GET", "/search?page=2", nil),
-			want:    "page",
+			want:    `page=2 did not match pattern "1"`,
 		},
 		{
 			name: "raw query string does not match",
