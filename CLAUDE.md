@@ -47,6 +47,12 @@ docs/
 trenchcoat.go             Public API package for Go test integration
 trenchcoat_test.go        Public API tests
 coatfile.schema.json      JSON Schema for coat files (hand-maintained — see Validation Rules)
+.claude/
+  settings.json           Checked-in Claude Code config (PostToolUse hooks)
+  hooks/
+    gofmt-on-write.py     Formats each Go file as it is edited
+    coat-schema-sync.py   Warns when coat types drift from coatfile.schema.json
+    test_hooks.py         Tests for both hooks
 .github/workflows/ci.yaml  CI pipeline (test, lint, vet, format, build)
 .goreleaser.yaml          GoReleaser config for cross-platform releases
 renovate.json             Renovate dependency auto-update config
@@ -96,6 +102,39 @@ goimports -w .                          # Fix imports
 golangci-lint run ./...                 # Lint
 govulncheck ./...                       # Vulnerability check
 ```
+
+### Claude Code Hooks
+
+`.claude/settings.json` is checked in and registers two `PostToolUse` hooks that
+fire after Claude edits a file. Both are deliberately silent unless they have
+something to say.
+
+| Hook | Fires on | Does |
+|------|----------|------|
+| `gofmt-on-write.py` | any `.go` file | Runs `gofmt -w` then `goimports -w` on that one file |
+| `coat-schema-sync.py` | `internal/coat/types.go`, `internal/coat/validate.go` | Warns if `coatfile.schema.json` is not also dirty in the working tree |
+
+The formatter only sees files **Claude** edits — your own editor changes are not
+covered, so the pre-commit checks below still stand. It is a safety net for the
+CI Format job, not a replacement for the manual pass.
+
+The schema hook exists because `coatfile.schema.json` hand-mirrors the coat
+schema and nothing enforces that they agree; the warning clears as soon as the
+schema is touched. See the Validation Rules section.
+
+Both scripts are plain stdlib Python with no dependencies, and must stay
+runnable under **Python 3.9** — macOS ships 3.9.6 as `/usr/bin/python3`, and the
+`#!/usr/bin/env python3` shebang resolves to whatever is first on `PATH`. That
+rules out PEP 604 (`str | None`) annotations unless
+`from __future__ import annotations` is present.
+
+```bash
+python3 .claude/hooks/test_hooks.py     # Test both hooks
+```
+
+The tests drive the real hook scripts against real `gofmt`, `goimports` and
+`git` in throwaway repos. Nothing is mocked — the point of the hooks is that
+they agree with the tools CI runs.
 
 ### Build with Version Info
 
@@ -254,7 +293,8 @@ duplicate coat names, and regex URIs simple enough to be expressed as globs.
 
 `coatfile.schema.json` duplicates this schema for editor completion. Nothing in
 the build or test suite enforces that it stays in sync — when you add or change
-a coat field, update it by hand in the same commit.
+a coat field, update it by hand in the same commit. The `coat-schema-sync.py`
+hook warns when you forget.
 
 ### Key Dependencies
 
@@ -359,6 +399,9 @@ go test -race ./...         # Run tests with race detector
 
 All Go source files **must** be formatted with `gofmt` and `goimports` before
 committing. Unformatted code must not be committed.
+
+The `gofmt-on-write.py` hook already formats files Claude edits, but it does not
+see edits made any other way — run the above regardless.
 
 ## Conventions
 
