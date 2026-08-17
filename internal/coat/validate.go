@@ -5,10 +5,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // MaxDelayMs is the maximum allowed value for delay_ms (60 seconds).
 const MaxDelayMs = 60000
+
+// GlobMetacharacters are the characters whose presence makes a request URI a
+// glob rather than an exact path. The matcher's classifier and this package's
+// validation must agree on this set: if validation used a narrower set it would
+// accept URIs the matcher then treats as globs and can never match.
+const GlobMetacharacters = "*?["
 
 // ValidationError represents a single validation error for a coat.
 type ValidationError struct {
@@ -91,6 +99,13 @@ func validateCoat(index int, c Coat) []*ValidationError {
 		pattern := strings.TrimPrefix(c.Request.URI, "~")
 		if _, err := regexp.Compile("^" + pattern + "$"); err != nil {
 			errs = append(errs, mkErr(fmt.Sprintf("request.uri has invalid regex %q: %v", c.Request.URI, err)))
+		}
+	} else if strings.ContainsAny(c.Request.URI, GlobMetacharacters) {
+		// The matcher classifies any URI containing a glob metacharacter as a
+		// glob. One that doublestar cannot compile matches nothing at all, so
+		// reject it here rather than let the coat sit dead in the file.
+		if !doublestar.ValidatePattern(c.Request.URI) {
+			errs = append(errs, mkErr(fmt.Sprintf("request.uri has invalid glob %q", c.Request.URI)))
 		}
 	}
 

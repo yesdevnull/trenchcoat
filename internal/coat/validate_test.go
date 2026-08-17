@@ -51,6 +51,51 @@ func TestValidate_InvalidRegexURI(t *testing.T) {
 
 // --- body_match validation ---
 
+func TestValidate_InvalidGlobURI(t *testing.T) {
+	// An unclosed '[' makes the URI a glob (the classifier triggers on '*?[')
+	// that doublestar cannot compile, so the coat silently never matches. The
+	// near-miss diagnostic for it reads "pattern X did not match X", which is
+	// baffling unless validation rejects it up front.
+	f := &File{
+		Coats: []Coat{
+			{
+				Name:     "bad-glob",
+				Request:  Request{URI: "/api/items[]"},
+				Response: &Response{Code: 200},
+			},
+		},
+	}
+
+	errs := Validate(f)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Message, "invalid glob") && strings.Contains(e.Message, "/api/items[]") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected an error naming the invalid glob pattern, got: %v", errs)
+	}
+}
+
+func TestValidate_ValidGlobURIsAccepted(t *testing.T) {
+	for _, uri := range []string{"/api/v1/users/*", "/api/**/posts/*", "/api/v?/users", "/api/items[abc]"} {
+		f := &File{
+			Coats: []Coat{
+				{
+					Name:     "good-glob",
+					Request:  Request{URI: uri},
+					Response: &Response{Code: 200},
+				},
+			},
+		}
+		if errs := Validate(f); len(errs) > 0 {
+			t.Fatalf("expected %q to validate, got: %v", uri, errs)
+		}
+	}
+}
+
 func TestValidate_BodyMatchWithoutBody(t *testing.T) {
 	f := &File{
 		Coats: []Coat{
