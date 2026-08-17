@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/yesdevnull/trenchcoat/internal/coat"
 	"gopkg.in/yaml.v3"
 )
 
@@ -511,7 +512,7 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 				Name: fmt.Sprintf("%s %s", req.Method, req.URI),
 				Request: coatRequest{
 					Method: req.Method,
-					URI:    req.URI,
+					URI:    escapeCapturedURI(req.URI),
 				},
 				Response: coatResponse{
 					Code:    resp.StatusCode,
@@ -938,6 +939,37 @@ func isContentLengthHeader(h string) bool {
 // readability -- the recorded body is no longer in that encoding.
 func isContentEncodingHeader(h string) bool {
 	return strings.EqualFold(h, "content-encoding")
+}
+
+// globEscaper escapes the characters doublestar gives special meaning to, so a
+// pattern built from them matches them literally.
+var globEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`*`, `\*`,
+	`?`, `\?`,
+	`[`, `\[`,
+	`]`, `\]`,
+	`{`, `\{`,
+	`}`, `\}`,
+)
+
+// escapeCapturedURI turns the path a capture was taken from into a request.uri
+// that means that path and no other.
+//
+// A URI is read as a glob as soon as it holds one of coat.GlobMetacharacters,
+// and a captured path may hold one: filter[name]-style APIs are ordinary. Left
+// verbatim, a balanced bracket quietly changes the coat's meaning --
+// /api/items[abc] is a character class matching /api/itemsa, /api/itemsb and
+// /api/itemsc but never the path recorded -- and an unbalanced one does not
+// compile at all, so the proxy emits a coat `trenchcoat validate` rejects.
+//
+// Paths with no metacharacter are left exactly as captured: they are matched
+// literally, so an escape would be part of the path the coat demands.
+func escapeCapturedURI(urlPath string) string {
+	if !strings.ContainsAny(urlPath, coat.GlobMetacharacters) {
+		return urlPath
+	}
+	return globEscaper.Replace(urlPath)
 }
 
 // SanitisePath converts a URL path to a filename-safe string.

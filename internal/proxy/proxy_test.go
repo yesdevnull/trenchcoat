@@ -1790,6 +1790,77 @@ func TestProxy_CapturedCoatReplaysFromAnotherClient(t *testing.T) {
 	}
 }
 
+func TestProxy_CapturedBracketedPathValidatesAndReplays(t *testing.T) {
+	// request.uri is recorded from the path the capture was taken from, and a
+	// path carrying a glob metacharacter stops meaning that path the moment the
+	// matcher reads it. /api/items[abc] is a character class matching
+	// /api/itemsa, /api/itemsb and /api/itemsc -- everything except the request
+	// that produced the coat. An unbalanced bracket fails louder: /api/items[]
+	// does not compile, so `trenchcoat validate` rejects a coat this tool wrote.
+	// Bracketed segments are ordinary in filter[name]-style APIs.
+	for _, path := range []string{"/api/items[abc]", "/api/items[]"} {
+		t.Run(path, func(t *testing.T) {
+			const body = "captured"
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+				_, _ = fmt.Fprint(w, body)
+			}))
+			defer upstream.Close()
+
+			writeDir := t.TempDir()
+			p, err := proxy.New(proxy.Config{
+				UpstreamURL:  upstream.URL,
+				WriteDir:     writeDir,
+				StripHeaders: []string{},
+				Dedupe:       "overwrite",
+				Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			if err != nil {
+				t.Fatalf("failed to create proxy: %v", err)
+			}
+			if _, err := p.Start("127.0.0.1:0"); err != nil {
+				t.Fatalf("failed to start proxy: %v", err)
+			}
+			t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+			resp, err := httpClient.Get(p.URL() + path)
+			if err != nil {
+				t.Fatalf("capture request failed: %v", err)
+			}
+			_ = resp.Body.Close()
+			p.WaitCaptures()
+
+			// LoadPaths validates, so this is `trenchcoat validate` on the capture.
+			loaded, errs := coat.LoadPaths([]string{writeDir})
+			if len(errs) > 0 {
+				t.Fatalf("the captured coat does not validate: %v", errs)
+			}
+			if len(loaded) != 1 {
+				t.Fatalf("expected 1 captured coat, got %d", len(loaded))
+			}
+
+			mock := server.New(loaded, server.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+			addr, err := mock.Start("127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to start mock: %v", err)
+			}
+			t.Cleanup(func() { _ = mock.Shutdown(5 * time.Second) })
+
+			replayed, err := httpClient.Get("http://" + addr + path)
+			if err != nil {
+				t.Fatalf("replay request failed: %v", err)
+			}
+			defer func() { _ = replayed.Body.Close() }()
+
+			got, _ := io.ReadAll(replayed.Body)
+			if replayed.StatusCode != http.StatusOK || string(got) != body {
+				t.Fatalf("replaying %s against its own capture got %d %q, want 200 %q",
+					path, replayed.StatusCode, got, body)
+			}
+		})
+	}
+}
+
 func TestProxy_DropsHeadersNamedInConnection(t *testing.T) {
 	// RFC 9110 7.6.1: the Connection header lists headers that are scoped to
 	// this hop only. Filtering just the static hop-by-hop set forwards them
