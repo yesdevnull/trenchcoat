@@ -1,8 +1,11 @@
 package coat
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,12 +23,45 @@ func ParseFile(path string) (*File, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".yaml", ".yml":
-		return parseFileWith(path, "YAML", yaml.Unmarshal)
+		return parseFileWith(path, "YAML", unmarshalStrictYAML)
 	case ".json":
-		return parseFileWith(path, "JSON", json.Unmarshal)
+		return parseFileWith(path, "JSON", unmarshalStrictJSON)
 	default:
 		return nil, fmt.Errorf("unrecognised coat file extension %q: expected .yaml, .yml, or .json", ext)
 	}
+}
+
+// unmarshalStrictYAML decodes YAML, rejecting keys that do not correspond to a
+// field. coatfile.schema.json sets additionalProperties: false throughout, and
+// silently discarding unknown keys contradicts that in the way that costs most:
+// a misspelt 'mehtod' leaves the coat defaulting to GET, so the POSTs it was
+// written for 404 while unintended GETs match, and `trenchcoat validate` calls
+// the file clean.
+func unmarshalStrictYAML(data []byte, v any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(v); err != nil {
+		// An empty document is not an error: it yields a File with no coats,
+		// which the existing behaviour allowed and validation reports on.
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// unmarshalStrictJSON decodes JSON, rejecting unknown keys for the same reason.
+func unmarshalStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func parseFileWith(path, format string, unmarshal func([]byte, any) error) (*File, error) {

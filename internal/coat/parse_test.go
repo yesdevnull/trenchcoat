@@ -2,6 +2,7 @@ package coat_test
 
 import (
 	"os"
+	"strings"
 	"path/filepath"
 	"testing"
 
@@ -490,5 +491,83 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 	t.Helper()
 	if expected != actual {
 		t.Errorf("%s: expected %v, got %v", field, expected, actual)
+	}
+}
+
+func TestParseFile_UnknownFieldIsAnError(t *testing.T) {
+	// coatfile.schema.json sets additionalProperties: false throughout, but the
+	// parsers discarded unknown keys, so a typo validated clean and quietly
+	// changed behaviour: 'mehtod: POST' left the coat defaulting to GET, so the
+	// intended POSTs 404'd and unintended GETs matched.
+	dir := t.TempDir()
+
+	yamlPath := filepath.Join(dir, "typo.yaml")
+	yamlBody := "coats:\n  - name: typo\n    request:\n      mehtod: POST\n      uri: /api/users\n    response:\n      code: 200\n"
+	if err := os.WriteFile(yamlPath, []byte(yamlBody), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := coat.ParseFile(yamlPath); err == nil {
+		t.Fatal("expected a parse error naming the unknown YAML field 'mehtod'")
+	} else if !strings.Contains(err.Error(), "mehtod") {
+		t.Fatalf("parse error should name the offending field, got: %v", err)
+	}
+
+	jsonPath := filepath.Join(dir, "typo.json")
+	jsonBody := `{"coats":[{"name":"typo","request":{"heders":{"A":"b"},"uri":"/x"},"response":{"code":200}}]}`
+	if err := os.WriteFile(jsonPath, []byte(jsonBody), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := coat.ParseFile(jsonPath); err == nil {
+		t.Fatal("expected a parse error naming the unknown JSON field 'heders'")
+	} else if !strings.Contains(err.Error(), "heders") {
+		t.Fatalf("parse error should name the offending field, got: %v", err)
+	}
+}
+
+func TestParseFile_KnownFieldsStillParse(t *testing.T) {
+	// The strict decoder must not reject anything the schema allows.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "full.yaml")
+	body := `coats:
+  - name: full
+    request:
+      method: POST
+      uri: /api/users
+      headers:
+        Content-Type: application/json
+      query:
+        page: "1"
+      body: '{"n":1}'
+      body_match: exact
+    response:
+      code: 201
+      headers:
+        Content-Type: application/json
+      body: '{"ok":true}'
+      delay_ms: 1
+      delay_jitter_ms: 1
+  - name: sequence
+    request:
+      uri: /seq
+    responses:
+      - code: 503
+      - code: 200
+    sequence: once
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := coat.ParseFile(path)
+	if err != nil {
+		t.Fatalf("a coat file using every documented field must parse, got: %v", err)
+	}
+	if len(f.Coats) != 2 {
+		t.Fatalf("expected 2 coats, got %d", len(f.Coats))
+	}
+	if errs := coat.Validate(f); len(errs) > 0 {
+		t.Fatalf("expected the file to validate, got: %v", errs)
 	}
 }
