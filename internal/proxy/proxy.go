@@ -717,12 +717,21 @@ func (p *Proxy) reserveFilename(method, urlPath string, status int) (filename, b
 }
 
 // releaseFilename records that a capture has finished writing base.
+//
+// The last capture for a base drops its lock as well as its inflight entry.
+// inflight[base] is non-zero for the whole time any capture holds or is waiting
+// on that lock -- it is taken before the lock and released after it, since the
+// deferred Unlock runs first -- so a base with no captures left in flight has no
+// one holding its mutex, and the next capture of the same request simply creates
+// a fresh one. Without this the proxy accumulates a mutex per distinct
+// METHOD_path_status for the life of the process, in every dedupe mode.
 func (p *Proxy) releaseFilename(base string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if p.inflight[base] <= 1 {
 		delete(p.inflight, base)
+		delete(p.baseLocks, base)
 		return
 	}
 	p.inflight[base]--
