@@ -2,8 +2,8 @@ package coat_test
 
 import (
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yesdevnull/trenchcoat/internal/coat"
