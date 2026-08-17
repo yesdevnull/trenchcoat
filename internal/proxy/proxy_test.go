@@ -1695,3 +1695,137 @@ func TestProxy_PreservesPercentEncodedPath(t *testing.T) {
 		t.Fatalf("upstream saw %q, want %q -- the encoded separator was decoded in transit", got, "/seg%2Fment/tail")
 	}
 }
+
+func TestProxy_CaptureOmitsClientSpecificHeaders(t *testing.T) {
+	// Captured request headers become mandatory match constraints at replay, so
+	// anything the client happened to send -- its User-Agent, its content
+	// negotiation, the transport's Accept-Encoding -- silently ties the coat to
+	// the tool that recorded it. Headers that genuinely qualify the request must
+	// still be kept.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":1}`))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	req, err := http.NewRequest("POST", p.URL()+"/api/users", strings.NewReader(`{"n":1}`))
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
+	}
+	req.Header.Set("User-Agent", "curl/8.7.1")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-AU")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "abc123")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	captured := readOnlyCoat(t, writeDir)
+	headers := captured.Coats[0].Request.Headers
+
+	for _, unwanted := range []string{"User-Agent", "Accept", "Accept-Encoding", "Accept-Language", "Host", "Content-Length", "Connection"} {
+		for k := range headers {
+			if strings.EqualFold(k, unwanted) {
+				t.Errorf("captured coat records %s: %q, which ties the coat to the client that recorded it", k, headers[k])
+			}
+		}
+	}
+
+	if got := headers["Content-Type"]; got != "application/json" {
+		t.Errorf("Content-Type qualifies the request and must be kept, got %q", got)
+	}
+	if got := headers["X-Api-Key"]; got != "abc123" {
+		t.Errorf("custom headers qualify the request and must be kept, got %q", got)
+	}
+}
+
+func TestProxy_CapturedCoatReplaysFromAnotherClient(t *testing.T) {
+	// The end-to-end consequence: a coat captured from one tool must serve a
+	// request made by a different one.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"users":[]}`))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	req, err := http.NewRequest("GET", p.URL()+"/api/users", nil)
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
+	}
+	req.Header.Set("User-Agent", "curl/8.7.1")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("capture request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("expected a captured coat, glob err %v files %v", err, files)
+	}
+	loaded, errs := coat.LoadPaths([]string{files[0]})
+	if len(errs) > 0 {
+		t.Fatalf("captured coat did not load: %v", errs)
+	}
+
+	mock := server.New(loaded, server.Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	addr, err := mock.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock: %v", err)
+	}
+	t.Cleanup(func() { _ = mock.Shutdown(5 * time.Second) })
+
+	replayReq, err := http.NewRequest("GET", "http://"+addr+"/api/users", nil)
+	if err != nil {
+		t.Fatalf("failed to build replay request: %v", err)
+	}
+	replayReq.Header.Set("User-Agent", "some-other-tool/2.0")
+	replayed, err := httpClient.Do(replayReq)
+	if err != nil {
+		t.Fatalf("replay request failed: %v", err)
+	}
+	defer func() { _ = replayed.Body.Close() }()
+
+	if replayed.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(replayed.Body)
+		t.Fatalf("replaying a captured coat from a different client got %d: %s", replayed.StatusCode, body)
+	}
+}
