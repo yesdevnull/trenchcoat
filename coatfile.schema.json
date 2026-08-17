@@ -87,7 +87,7 @@
           "default": "GET"
         },
         "uri": {
-          "description": "URI path to match. Supports exact strings, glob patterns (*/?) and regex (~/prefix).",
+          "description": "URI path to match. Supports exact strings, glob patterns (*, ?, [ and ** for multiple segments) and regex (~/prefix). A URI containing *, ? or [ is matched as a glob.",
           "type": "string"
         },
         "headers": {
@@ -116,7 +116,7 @@
           "type": "string"
         },
         "body_match": {
-          "description": "Body matching mode: exact (default), glob, contains, or regex.",
+          "description": "Body matching mode: exact (default), glob, contains, or regex. Requires 'body' to be set.",
           "type": "string",
           "enum": [
             "exact",
@@ -126,6 +126,11 @@
           ],
           "default": "exact"
         }
+      },
+      "dependentRequired": {
+        "body_match": [
+          "body"
+        ]
       }
     },
     "response": {
@@ -156,15 +161,17 @@
           "type": "string"
         },
         "delay_ms": {
-          "description": "Delay in milliseconds before sending the response.",
+          "description": "Delay in milliseconds before sending the response. Combined with delay_jitter_ms, must not exceed 60000.",
           "type": "integer",
           "minimum": 0,
+          "maximum": 60000,
           "default": 0
         },
         "delay_jitter_ms": {
-          "description": "Random jitter in milliseconds added on top of delay_ms. The actual additional delay is a random value in the range [0, N) where N is this value.",
+          "description": "Random jitter in milliseconds added on top of delay_ms. The actual additional delay is a random value in the range [0, N) where N is this value. Combined with delay_ms, must not exceed 60000.",
           "type": "integer",
           "minimum": 0,
+          "maximum": 60000,
           "default": 0
         }
       },

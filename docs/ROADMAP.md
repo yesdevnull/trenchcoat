@@ -3,7 +3,12 @@
 ## Feature Proposals — Ranked by Benefit vs Complexity
 
 Features are ranked from best ROI (high benefit, low complexity) to lowest.
-Complexity: Low (~1-2 days), Medium (~3-5 days), High (~1-2 weeks).
+
+Complexity is scope, not elapsed time. **Low** — a change within one package,
+roughly a few hundred lines with its tests. **Medium** — a new field or flag
+threaded through parsing, validation, matching and the docs, or a change that
+touches two packages. **High** — a new subsystem, a new subcommand, or a change
+to the coat file format that existing coats must survive.
 
 ---
 

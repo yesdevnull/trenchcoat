@@ -11,11 +11,23 @@ Trenchcoat is a CLI tool with two modes:
 
 Module path: `github.com/yesdevnull/trenchcoat`
 
+**`README.md` is the specification.** The coat file format, URI and value
+matching, precedence, the programmatic API and proxy capture behaviour are all
+documented there, and it is the version a user reads. Read it before changing
+matching, parsing or capture behaviour, and update it in the same commit as the
+change. This file covers what a user does not need to know: internal structure,
+the invariants that are not obvious from the code, and how to work on the repo.
+
+That split exists because it was previously violated. The coat spec lived in
+both files, they diverged, and CLAUDE.md was right about header globs while the
+README told users the opposite. Two copies of a spec is two chances to be wrong.
+
 ## Repository Structure
 
 ```
 cmd/trenchcoat/           CLI entrypoint (cobra commands: serve, proxy, validate)
   main.go                 Root command, signal handling, version info
+  help.txt                Long help, go:embed-ed into the binary — a doc surface
   serve.go                Serve subcommand with hot-reload file watching
   proxy.go                Proxy subcommand
   validate.go             Validate subcommand
@@ -23,7 +35,7 @@ cmd/trenchcoat/           CLI entrypoint (cobra commands: serve, proxy, validate
 internal/
   coat/                   Types, parsing, validation for coat files
     types.go              Core types: File, Coat, Request, Response, QueryField
-    parse.go              YAML/JSON file parsing
+    parse.go              YAML/JSON parsing, ${VAR} substitution, strict decoding
     load.go               LoadPaths: loads coats from files and directories
     validate.go           Schema validation (mutual exclusivity, regex, etc.)
     query.go              QueryField YAML/JSON unmarshalling
@@ -39,24 +51,52 @@ internal/
     server.go             HTTP server, request handling, body_file resolution
 examples/
   go-tests/               Example test suite using the programmatic API
-    example_test.go       Basic mock, multiple coats, headers, sequences, globs
+scripts/
+  coverage-report.sh      On-demand coverage report (backs `make coverage`)
 docs/
-  demo.md                 CLI demo walkthrough
+  demo.md                 CLI demo walkthrough (Showboat-generated)
   ROADMAP.md              Future feature plans
-  test-coverage-analysis.md  Coverage report and test inventory
 trenchcoat.go             Public API package for Go test integration
 trenchcoat_test.go        Public API tests
-coatfile.schema.json      JSON Schema for coat files (hand-maintained — see Validation Rules)
+README.md                 User-facing specification — see above
+coatfile.schema.json      JSON Schema for coat files (hand-maintained)
+.golangci.yml             Linter set, so `make lint` and CI agree
 .claude/
   settings.json           Checked-in Claude Code config (PostToolUse hooks)
   hooks/
     gofmt-on-write.py     Formats each Go file as it is edited
     coat-schema-sync.py   Warns when coat types drift from coatfile.schema.json
     test_hooks.py         Tests for both hooks
-.github/workflows/ci.yaml  CI pipeline (test, lint, vet, format, build)
+.github/workflows/
+  ci.yaml                 Test, lint, vet, format, hooks, goreleaser check, build
+  release.yaml            Tag-triggered GoReleaser publish
 .goreleaser.yaml          GoReleaser config for cross-platform releases
 renovate.json             Renovate dependency auto-update config
 ```
+
+## Documentation surfaces
+
+Four files describe the coat format or the CLI, and nothing enforces that they
+agree. Every one of them has drifted at least once. When you change behaviour,
+work this table:
+
+| Change | Update |
+|---|---|
+| Any coat field added, removed or renamed | `README.md`, `cmd/trenchcoat/help.txt`, `coatfile.schema.json` |
+| Any validation rule | `README.md`, `coatfile.schema.json` |
+| Any CLI flag added or changed | `README.md`, `cmd/trenchcoat/help.txt` |
+| Matching, precedence or capture behaviour | `README.md`, and `help.txt` if it contradicts |
+| Internal invariant or repo workflow | this file |
+
+`help.txt` is `go:embed`-ed, so a stale line there ships in the binary — that is
+how `--tls-server-name` went five months undocumented in `trenchcoat --help`.
+
+`coatfile.schema.json` hand-mirrors the coat schema and nothing in the build or
+tests enforces that they agree; the `coat-schema-sync.py` hook warns when you
+edit `internal/coat/types.go` or `validate.go` without touching the schema.
+
+`docs/demo.md` is Showboat-generated from real command output. Do not hand-edit
+it — regenerate it, or its output stops being evidence of anything.
 
 ## Development
 
@@ -65,12 +105,15 @@ renovate.json             Renovate dependency auto-update config
 - Go 1.25.x. The exact patch release lives in the `toolchain` directive in
   `go.mod`; CI installs it via `go-version-file: go.mod`, and Renovate bumps it.
   The `go` directive stays at `1.25` as the minimum for consumers of the package.
-- golangci-lint. The version is pinned in `.github/workflows/ci.yaml`.
+- golangci-lint. The version is pinned in `.github/workflows/ci.yaml` and the
+  linter set in `.golangci.yml`, so a local run matches CI.
 
 ### Installing Go
 
 If Go 1.25+ is not installed or the auto-download via `GOTOOLCHAIN` fails (e.g.
-due to DNS/network restrictions), install manually:
+due to DNS/network restrictions), install manually. Renovate keeps the version
+below current — do not replace it with a placeholder, the `customManagers` entry
+in `renovate.json` matches on it.
 
 ```bash
 # Download (linux/amd64 — adjust for your platform)
@@ -90,7 +133,7 @@ Ensure `/usr/local/go/bin` is in your `PATH`.
 ```bash
 make build          # Build binary
 make test           # Run tests (verbose, race detector)
-make coverage       # Run tests with coverage, generate HTML report
+make coverage       # Coverage report + coverage.html (scripts/coverage-report.sh)
 make lint           # Run golangci-lint
 make clean          # Clean build artifacts and test cache
 
@@ -101,6 +144,9 @@ gofmt -w .                              # Format code
 goimports -w .                          # Fix imports
 golangci-lint run ./...                 # Lint
 govulncheck ./...                       # Vulnerability check
+
+scripts/coverage-report.sh --min 90     # Functions under 90% covered
+scripts/coverage-report.sh --help       # Full options
 ```
 
 ### Claude Code Hooks
@@ -118,15 +164,12 @@ The formatter only sees files **Claude** edits — your own editor changes are n
 covered, so the pre-commit checks below still stand. It is a safety net for the
 CI Format job, not a replacement for the manual pass.
 
-The schema hook exists because `coatfile.schema.json` hand-mirrors the coat
-schema and nothing enforces that they agree; the warning clears as soon as the
-schema is touched. See the Validation Rules section.
-
 Both scripts are plain stdlib Python with no dependencies, and must stay
 runnable under **Python 3.9** — macOS ships 3.9.6 as `/usr/bin/python3`, and the
 `#!/usr/bin/env python3` shebang resolves to whatever is first on `PATH`. That
 rules out PEP 604 (`str | None`) annotations unless
-`from __future__ import annotations` is present.
+`from __future__ import annotations` is present. The CI Hooks job runs the tests
+on 3.9 for exactly this reason.
 
 ```bash
 python3 .claude/hooks/test_hooks.py     # Test both hooks
@@ -154,205 +197,53 @@ Use Red/Green/Refactor throughout:
 2. **Green** — Write the minimum code to pass
 3. **Refactor** — Clean up while keeping tests green
 
-Every feature begins with a test. Do not write implementation code without a corresponding failing test first.
+Every feature begins with a test. Do not write implementation code without a
+corresponding failing test first.
 
 ## Architecture Notes
 
-### CLI Commands
+The user-facing behaviour these implement is specified in `README.md`. What
+follows is what the README does not say.
 
-The CLI uses cobra with three subcommands:
+### Size limits
 
-**`trenchcoat serve`** — Start the mock HTTP server
-- `--coats` — Paths to coat files or directories to load
-- `--port` — Port to listen on (default: 8080)
-- `--tls-cert` / `--tls-key` — TLS certificate and key (must be provided together)
-- `--watch` — Watch coat files for changes and hot-reload
-- `--verbose` — Log each incoming request and match result
-- `--log-format` — Log format: `text` (default) or `json`
+| Constant | Value | Governs |
+|---|---|---|
+| `matcher.maxBodyMatchSize` | 1 MiB | Request body read for `request.body` matching. A larger body never matches a body-constrained coat, but is still restored in full for downstream handlers. |
+| `server.maxRecordBodySize` | 1 MiB | Request body recorded for assertions and exposed to templates as `.Body`. Truncated with a marker. |
+| `proxy.maxBodySize` | 10 MiB | Request and response bodies through the proxy. Over it, the request is 413 and the response 502. |
+| `coat.MaxDelayMs` | 60000 | `delay_ms` + `delay_jitter_ms` combined, rejected at validation. |
 
-**`trenchcoat proxy <upstream-url>`** — Start in proxy capture mode
-- `--port` — Port to listen on (default: 8080)
-- `--write-dir` — Directory to write captured coat files (default: `.`)
-- `--filter` — Only capture requests whose URI matches this glob pattern
-- `--strip-headers` — Headers to redact (default: `Authorization`, `Cookie`, `Set-Cookie`)
-- `--no-headers` — Omit all headers from captured coat files (mutually exclusive with `--strip-headers`)
-- `--capture-body` — Capture request body in coat files (default: `true`)
-- `--dedupe` — Deduplication strategy: `overwrite` (default), `skip`, or `append`
-- `--pretty-json` — Pretty-print JSON response bodies in captured coat files
-- `--body-file-threshold` — Write response bodies larger than N bytes to separate files (0 = always inline)
-- `--name-template` — Custom template for captured coat file names (e.g. `{{.Method}}-{{.Path}}-{{.Status}}`)
-- `--tls-server-name` — Verify the upstream TLS certificate against this hostname instead of the upstream URL host (also sets SNI)
-- `--verbose` — Log each proxied request and capture event
-- `--log-format` — Log format: `text` (default) or `json`
+Request bodies are read lazily and reconstituted via `httputil.ReconstitutedBody`
+so a body consumed for matching is still readable by the handler. Anything that
+reads a request body must go through it.
 
-**`trenchcoat validate <path>...`** — Validate coat files for schema correctness
+### Invalid coats from the programmatic API
 
-All commands support `--config` (global flag) for explicit config file path.
+Validation and `WithCoatFile` reject a coat defining neither `response` nor
+`responses`, so a file can never produce one. `WithCoat`/`WithCoats` take a
+`Coat` as given, so they can. Such a request returns **500** naming the coat and
+logs at `ERROR` — it is a fault in the coat, not a request that found no match,
+and must not be conflated with the 404 path.
 
-### Configuration File Discovery
+The same reasoning applies to `sequence`: validation restricts it to `cycle` and
+`once`, but the programmatic API accepts anything, so `resolveSequence` treats
+every unrecognised value as `cycle` rather than indexing off the end of
+`Responses`.
 
-Config files are discovered in this order (first found wins):
+### Matcher internals
 
-1. `--config` flag (explicit path)
-2. `.trenchcoat.yaml` / `.trenchcoat.yml` in current working directory
-3. `~/.config/trenchcoat/config.yaml`
-
-No config file is required — the tool works with CLI flags alone.
-
-### Coat Specification
-
-Coats are YAML or JSON files defining request/response mocks. Schema:
-
-```yaml
-coats:
-  - name: "descriptive-name"
-    request:
-      method: GET                    # optional, default GET. Supports ANY.
-      uri: "/api/v1/users"          # mandatory. Exact, glob (*/?/**), or regex (~/).
-      headers:                       # optional, subset match with glob values
-        Authorization: "Bearer *"
-      query:                         # optional, string or map with glob values
-        page: "1"
-      body: '{"name": "alice"}'      # optional, exact string match on request body
-      body_match: exact              # optional: exact (default), glob, contains, regex
-    response:
-      code: 200
-      headers:
-        Content-Type: "application/json"
-      body: '{"users": []}'         # or body_file: "./fixtures/data.json"
-      delay_ms: 0
-      delay_jitter_ms: 0            # random delay added to delay_ms, in [0, N) ms
-    # OR for sequences (mutually exclusive with response):
-    responses:
-      - code: 503
-        body: "unavailable"
-      - code: 200
-        body: "ok"
-    sequence: cycle                  # cycle (default) or once
-```
-
-### Response Body Templating
-
-Response bodies containing `{{` are rendered as a Go `text/template` with request
-context, after `body_file` resolution — so `body_file` contents are templated too.
-Available fields and methods:
-
-| Field            | Meaning                                              |
-|------------------|------------------------------------------------------|
-| `.Method`        | Request method                                       |
-| `.Path`          | Request URL path                                     |
-| `.Body`          | Request body (capped at 1 MiB, `maxRecordBodySize`)  |
-| `.Query "page"`  | First value of a query parameter, `""` if absent     |
-| `.Segment 3`     | Nth path segment, 0-indexed from root, `""` if absent|
-
-A body that legitimately contains `{{` will be treated as a template. Parse
-failures return the body unrendered and silently; execution failures log a
-warning and return the body unrendered.
-
-### URI Matching Modes
-
-| Mode  | Syntax            | Example                    |
-|-------|-------------------|----------------------------|
-| Exact | Plain string      | `/api/v1/users`            |
-| Glob  | Contains `*`, `?`, `[` or `**` | `/api/v1/users/*` |
-| Glob  | `**` multi-segment | `/api/**/posts/*`         |
-| Regex | `~/` prefix       | `~/api/v1/users/\d+`       |
-
-Regex URIs are anchored as a group — `^(?:pattern)$` — so a top-level
-alternation is bounded as a whole: `~/users|/accounts` matches `/users` and
-`/accounts`, and neither `/users/extra` nor `/x/y/accounts`.
-
-A URI is treated as a glob when it contains `*`, `?` or `[`. `[` is included
-because the underlying matcher is `doublestar`, so `/items[abc]` is a character
-class rather than a literal path. To match a literal bracket, escape it with a
-backslash — `/items\[abc\]` — noting that the URI still counts as a glob and
-is matched as one; there is no way to make a bracketed URI an exact match.
-
-### Header, Query and Body Globs
-
-Header values, query values and `body_match: glob` patterns use a *different*
-glob dialect from URIs, because these values are not paths:
-
-| Metacharacter | Matches                                        |
-|---------------|------------------------------------------------|
-| `*`           | any sequence of characters, `/` and `\n` included |
-| `?`           | any single character                           |
-
-Everything else, `[` included, matches literally. So `Content-Type: "*"` matches
-`application/json`, and `redirect: "*"` matches `/home/dash` — unlike URI globs,
-where `*` stops at a path segment boundary.
-
-### Match Precedence (highest to lowest)
-
-1. Exact URI + method + headers + query
-2. Exact URI + method + fewer qualifiers
-3. Glob URI (longer literal prefix wins)
-4. Regex URI (file-definition order)
-5. `method: ANY` ranks below method-specific at same specificity
-
-Specificity is the count of qualifiers on the request: headers, query fields, and
-body presence.
-
-### Unmatched Requests
-
-Requests that match no coat, and requests hitting an exhausted `once` sequence,
-both return **404** with a JSON body (`{"error": ...}`).
-
-A request that *matches* a coat defining neither `response` nor `responses`
-returns **500** naming the coat, and logs at `ERROR`: that is a fault in the
-coat rather than a request that found no match. Validation and `WithCoatFile`
-both reject such a coat, so this is only reachable via `WithCoat`/`WithCoats`.
-
-### Validation Rules
-
-- Coat files are parsed **strictly**: an unknown YAML or JSON key is a parse
-  error naming the field, not a silently ignored one. No prefix is exempt, in
-  either format: `coats` is the only top-level key a coat file may hold
-- To share a response fragment between coats without repeating it, anchor on
-  the response of the first coat that uses it and merge from the coats after:
-
-  ```yaml
-  coats:
-    - name: first
-      request: {uri: /a}
-      response: &defaults        # anchor on a real field, not a holder key
-        code: 200
-        headers: {Content-Type: application/json}
-    - name: second
-      request: {uri: /b}
-      response:
-        <<: *defaults            # code 200, Content-Type merged in
-    - name: third
-      request: {uri: /c}
-      response:
-        <<: *defaults
-        code: 201                # merged values can be overridden
-  ```
-
-- A coat file must contain exactly one document, in either format; anything
-  after it is an error. A YAML file may still carry the markers of a single
-  document — a leading `---`, a trailing `---` or `...` — but a second `---`
-  document is rejected rather than silently ignored
-- A URI containing `*`, `?` or `[` must be a valid `doublestar` pattern
-- `request.uri` is required
-- Must have exactly one of `response` (singular) or `responses` (plural)
-- `body` and `body_file` are mutually exclusive (in both singular and plural forms)
-- `sequence` is only valid with `responses` (plural), must be `cycle` or `once`
-- Regex URIs (`~/` prefix) must compile as valid Go regexps
-- `body_match` must be `exact`, `glob`, `contains` or `regex`, and requires
-  `request.body` to be set; with `regex`, the body must compile as a Go regexp
-- `body_file` must be a relative path with no `..` components
-- `delay_ms` and `delay_jitter_ms` must be non-negative, and combined must not
-  exceed `coat.MaxDelayMs` (60000)
-
-`ValidateWithWarnings` also returns non-fatal **warnings** alongside errors:
-duplicate coat names, and regex URIs simple enough to be expressed as globs.
-`Validate` returns the errors only.
-
-`coatfile.schema.json` duplicates this schema for editor completion. Nothing in
-the build or test suite enforces that it stays in sync — when you add or change
-a coat field, update it by hand in the same commit. The `coat-schema-sync.py`
-hook warns when you forget.
+- Precedence is a `matchScore` sorted by `betterThan`; the ordering is
+  documented for users in `README.md` and must not drift from it.
+- An invalid regex URI or `body_match: regex` pattern keeps its entry, with the
+  compiled regex left nil, so the coat still appears in near-miss diagnostics
+  but can never match.
+- `literalLen` (glob tie-breaking) stops at every glob metacharacter, `[`
+  included — a character class is not literal prefix, and counting it as such
+  lets a vaguer pattern outrank a more specific one.
+- `globCache` hangs off the `Matcher`, not the package, so a hot reload discards
+  the previous generation's compiled patterns instead of accumulating every
+  pattern the process has ever seen.
 
 ### Key Dependencies
 
@@ -365,94 +256,10 @@ hook warns when you forget.
 | slog (stdlib)   | Structured logging             |
 | gopkg.in/yaml.v3 | YAML parsing                 |
 
-### Proxy Capture
-
-- Respects `http_proxy`/`https_proxy`/`no_proxy` env vars
-- File naming: `{METHOD}_{sanitised_path}_{status}.yaml`
-- Dedupe strategies: `overwrite` (stable filename), `skip`, `append`
-- Headers in `--strip-headers` are redacted from captures
-- Every request header a coat records becomes a **match constraint at replay**,
-  so client- and connection-specific headers are never captured: hop-by-hop
-  headers, `Content-Length`, `Host`, `User-Agent`, `Accept`, `Accept-Encoding`
-  and `Accept-Language`. Recording them would tie a coat to the tool that
-  captured it — a capture taken with curl would 404 for every other client.
-  `Content-Type` and custom headers such as `X-Api-Key` are still captured.
-- Dropping `Accept` and `Accept-Language` has a known cost against a
-  content-negotiating upstream, where those headers select the representation
-  rather than describe the client. Capturing `GET /doc` with
-  `Accept: application/json` and again with `Accept: application/xml` produces
-  the same base name, so under the default `overwrite` the second capture
-  replaces the first and the surviving coat holds the XML body with no `Accept`
-  constraint — replaying the JSON request returns XML. Capture such an upstream
-  one representation at a time, into separate `--write-dir`s, and add the
-  `Accept` header to the coats by hand
-- Headers a peer scopes to one hop by naming them in its `Connection` header
-  are withheld from the wire in both directions, and are not captured either —
-  a coat recording them would demand, at replay, a header the upstream never
-  saw
-- A captured path containing a glob metacharacter (`*`, `?`, `[`) is recorded
-  with those characters **escaped**, so the coat means the path it was captured
-  from: `/api/items[abc]` is recorded as `/api/items\[abc\]`. Left unescaped it
-  would be read as a character class, and an unbalanced bracket would not
-  compile at all. Paths without a metacharacter are recorded verbatim
-- Captured `request.uri` is the **decoded** path, so `/files/dir%2Ffile` and
-  `/files/dir/file` produce one coat even though they are different requests
-  upstream; with `--dedupe skip` the second is discarded. Forwarding preserves
-  the encoding — it is only the capture that collapses
-- `Content-Length` is never recorded in a captured **response** either: the
-  captured body differs from the upstream body whenever it is pretty-printed or
-  decompressed, and `net/http` derives the correct length when serving
-- Gzip-compressed upstream responses are decompressed for readability in captured coats
-- Redirect responses are captured as-is (client does not follow redirects and returns the 3xx response as-is via `http.ErrUseLastResponse`)
-- To proxy to an upstream whose TLS certificate is issued for a different
-  hostname than the address it is served from, pass `--tls-server-name` with the
-  hostname the certificate covers. This sets `tls.Config.ServerName`, so it
-  becomes both the SNI name sent upstream and the name the certificate is
-  verified against. Chain and expiry verification remain enabled.
-- To proxy to upstreams with TLS certificates using negative serial numbers
-  (rejected by Go 1.23+), set the environment variable
-  `GODEBUG=x509negativeserial=1` before starting the proxy. See
-  https://go.dev/doc/godebug#x509negativeserial for details.
-
-### Programmatic API (for Go tests)
-
-```go
-srv := trenchcoat.NewServer(
-    trenchcoat.WithCoat(trenchcoat.Coat{
-        Name:    "get-users",
-        Request: trenchcoat.Request{Method: "GET", URI: "/api/v1/users"},
-        Response: &trenchcoat.Response{
-            Code: 200,
-            Body: `{"users": []}`,
-        },
-    }),
-)
-srv.Start(t) // registers t.Cleanup to stop the server
-// srv.URL contains "http://127.0.0.1:<port>"
-```
-
-`Request.Body` is a `*string` so an empty body can be distinguished from no body
-constraint — use `trenchcoat.StringPtr("...")` to set it.
-
-Available options:
-- `WithCoat(Coat)` — add a single coat
-- `WithCoats(...Coat)` — add multiple coats
-- `WithCoatFile(path)` — load coats from a YAML/JSON file
-- `WithVerbose()` — enable verbose request logging
-- `WithTLS(certFile, keyFile)` — use TLS with explicit certificate
-- `WithSelfSignedTLS()` — auto-generate self-signed cert; sets `srv.TLSClient`
-
-Assertion methods (available after `Start`):
-- `srv.AssertCalled(t, "name")` — coat called at least once
-- `srv.AssertCalledN(t, "name", n)` — called exactly N times
-- `srv.AssertNotCalled(t, "name")` — never called
-- `srv.Requests("name")` — return captured requests
-- `srv.ResetCalls()` — clear call data
-
 ## Testing Expectations
 
 - Unit tests for matcher: exact, glob, regex URI; method+ANY; header globs; query matching; precedence
-- Unit tests for coat parsing/validation (YAML, JSON, mutual exclusivity rules)
+- Unit tests for coat parsing/validation (YAML, JSON, mutual exclusivity rules, strict decoding, `${VAR}` substitution)
 - Integration tests for serve mode (start server, send requests, assert responses)
 - Integration tests for proxy mode (proxy through, assert captured coat files)
 - Tests for response sequences (cycle and once modes)
@@ -461,18 +268,36 @@ Assertion methods (available after `Start`):
 - Tests for the public API (`trenchcoat_test.go`)
 - Tests for CLI commands (`commands_test.go`)
 
-See `docs/test-coverage-analysis.md` for detailed coverage data and test inventory.
+Unix-only behaviour (symlinks, signals, FIFOs) lives in `*_unix_test.go` behind
+a `//go:build unix` tag. CI runs the suite on `ubuntu-latest` only, so those
+tests always run there and Windows-specific behaviour is not covered by tests.
+
+Run `scripts/coverage-report.sh` for current coverage. There is deliberately no
+coverage report committed to the repository — the one that used to be here
+drifted five months before anyone noticed.
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/ci.yaml` runs:
-- **Test**: `go test -v -count=1 -race -coverprofile=coverage.out` (uploads coverage artifact)
-- **Lint**: golangci-lint via `golangci-lint-action`
-- **Vet**: `go vet`, `go mod tidy` check, `govulncheck`
-- **Format**: `gofmt -l`, `goimports -l` (fail if any files are unformatted)
-- **Build**: Cross-compile linux/darwin/windows x amd64/arm64 with ldflags (depends on all other jobs)
+`.github/workflows/ci.yaml`:
 
-Releases are configured via `.goreleaser.yaml` (tar.gz archives with checksums).
+- **Test** — `go test -v -count=1 -race -coverprofile=coverage.out` (uploads coverage artifact)
+- **Lint** — golangci-lint, version pinned in the workflow, linters in `.golangci.yml`
+- **Vet & Static Analysis** — `go vet`, `go mod tidy` check, `govulncheck` (fails the job)
+- **Format** — `gofmt -l`, `goimports -l`
+- **Claude Code Hooks** — `.claude/hooks/test_hooks.py` on Python 3.9
+- **GoReleaser Config** — `goreleaser check`
+- **Build** — cross-compile linux/darwin/windows × amd64/arm64, needs all of the above
+
+Tool versions are pinned in the workflow `env` block, each behind a
+`# renovate:` annotation that a customManager in `renovate.json` reads. Do not
+reintroduce `@latest` installs — they make a run unreproducible and let an
+upstream release break an unrelated pull request.
+
+`paths-ignore` skips the entire workflow for a docs-only change. That is safe
+only while no job here is a required status check; if branch protection is
+enabled on `main`, drop the filters.
+
+`.github/workflows/release.yaml` runs GoReleaser on a `v*` tag.
 
 ## Pre-commit Requirements
 
@@ -503,3 +328,4 @@ see edits made any other way — run the above regardless.
 - Graceful shutdown on SIGINT/SIGTERM with 10s drain timeout
 - Use `net.Listen("tcp4", addr)` for IPv4-only binding
 - `sync.WaitGroup.Go()` (Go 1.25) for fire-and-forget goroutines
+- British spelling in prose and comments — `misspell` enforces it in Go files
