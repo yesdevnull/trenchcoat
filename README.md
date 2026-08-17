@@ -56,6 +56,8 @@ curl http://localhost:8080/hello
 
 ## CLI usage
 
+`--config` is a global flag available on every subcommand (see [Configuration](#configuration)).
+
 ### `trenchcoat serve`
 
 Start the mock HTTP server.
@@ -68,13 +70,11 @@ trenchcoat serve [flags]
 |---|---|---|
 | `--coats` | `[]` | Paths to coat files or directories to load (non-recursive; `*.yaml`, `*.yml`, `*.json`). |
 | `--port` | `8080` | Port to listen on. |
-| `--tls-cert` | | Path to TLS certificate file (PEM). Enables HTTPS. |
-| `--tls-key` | | Path to TLS private key file (PEM). Required with `--tls-cert`. |
-| `--tls-ca` | | Path to CA certificate chain (PEM). Appended to the system trust store. |
+| `--tls-cert` | | Path to TLS certificate file (PEM). Enables HTTPS. Must be provided together with `--tls-key`. |
+| `--tls-key` | | Path to TLS private key file (PEM). Must be provided together with `--tls-cert`. |
 | `--watch` | `false` | Watch coat files for changes and hot-reload without restarting. |
 | `--verbose` | `false` | Log each incoming request, match result, and matched coat name. |
 | `--log-format` | `text` | Log output format: `text` or `json`. |
-| `--config` | | Path to configuration file (see [Configuration](#configuration)). |
 
 ### `trenchcoat proxy`
 
@@ -100,7 +100,22 @@ trenchcoat proxy <upstream-url> [flags]
 | `--verbose` | `false` | Log each proxied request and capture event. |
 | `--log-format` | `text` | Log output format: `text` or `json`. |
 
-Captured files are named `{METHOD}_{sanitised_path}_{status_code}_{unix_timestamp}.yaml`.
+Captured file names are built from `{METHOD}_{sanitised_path}_{status_code}`, with a suffix that depends on `--dedupe`:
+
+| Strategy | File name | Behaviour |
+|---|---|---|
+| `overwrite` | `{base}.yaml` | Stable name, so a repeated request replaces the earlier capture. |
+| `skip` | `{base}_{unix_timestamp}.yaml` | Requests matching an existing capture are not written again. |
+| `append` | `{base}_{unix_timestamp}.yaml`, then `{base}_{n}_{unix_timestamp}.yaml` | Every request is kept as a separate file. |
+
+`--name-template` replaces the `{base}` portion. Rendered names are stripped of path separators and any character outside `[a-zA-Z0-9_-]`.
+
+Behaviour worth knowing when capturing:
+
+- Requests and responses larger than 10 MiB are rejected rather than captured.
+- Gzipped upstream responses are decompressed before being written to the coat file, so captures stay readable. The client still receives the response as the upstream sent it.
+- Redirects are not followed. The 3xx response is relayed and captured as-is.
+- `http_proxy`, `https_proxy`, and `no_proxy` are respected for upstream connections.
 
 ### `trenchcoat validate`
 
@@ -110,7 +125,7 @@ Validate coat files for schema correctness without starting a server.
 trenchcoat validate <path>...
 ```
 
-Exits 0 if all files are valid, non-zero with diagnostics if any errors are found.
+Exits 0 if all files are valid, non-zero with diagnostics if any errors are found. Warnings are printed to stderr but do not cause a non-zero exit.
 
 ## Configuration
 
@@ -134,7 +149,6 @@ watch: true
 tls:
   cert: ./certs/server.pem
   key: ./certs/server-key.pem
-  ca: ./certs/corporate-ca-chain.pem
 
 proxy:
   write_dir: ./captured
@@ -156,14 +170,15 @@ coats:
   - name: "get-users"                  # optional, used in logging
     request:
       method: GET                      # optional, default: GET (use ANY to match all methods)
-      uri: "/api/v1/users"             # required — exact, glob (*/?) or regex (~/)
+      uri: "/api/v1/users"             # required — exact, glob (*, ?, **) or regex (~/)
       headers:                         # optional, subset match with glob support on values
         Accept: "application/json"
         Authorization: "Bearer *"
       query:                           # optional, map with glob values or raw query string
         page: "1"
         limit: "*"
-      body: '{"name": "alice"}'        # optional, exact string match on request body
+      body: '{"name": "alice"}'        # optional, match against the request body
+      body_match: exact                # optional: exact (default), glob, contains, regex
 
     response:
       code: 200                        # optional, default: 200
@@ -173,6 +188,7 @@ coats:
         {"users": [{"id": 1, "name": "Alice"}]}
       # body_file: "./fixtures/users.json"  # load body from file (relative to coat file)
       delay_ms: 0                      # optional artificial delay in ms
+      delay_jitter_ms: 0               # optional random extra delay in [0, N) ms
 ```
 
 ### URI matching modes
@@ -181,13 +197,31 @@ coats:
 |---|---|---|---|
 | Exact | Plain string | `/api/v1/users` | Only `/api/v1/users` |
 | Glob | Contains `*` or `?` | `/api/v1/users/*` | `/api/v1/users/123`, `/api/v1/users/abc` |
+| Glob | `**` spans path segments | `/api/**/posts/*` | `/api/v1/users/1/posts/9` |
 | Regex | Prefixed with `~/` | `~/api/v1/users/\d+` | `/api/v1/users/123` but not `/api/v1/users/abc` |
 
-When multiple coats match, the most specific wins: exact beats glob (longer literal prefix wins), glob beats regex, and method-specific beats `ANY`.
+When multiple coats match, they are ranked in this order:
+
+1. URI mode — exact beats glob, glob beats regex.
+2. Number of qualifiers — each `headers` entry, each `query` entry, and a `body` constraint adds one.
+3. For globs only — the longer literal prefix wins.
+4. Method — a specific method beats `ANY`.
+5. Definition order — the first coat defined wins.
 
 ### Request body matching
 
-The optional `body` field on a request performs an exact string comparison against the incoming request body. When omitted, any body (or no body) matches. When set — even to an empty string — only requests whose body matches exactly are selected. A coat with a `body` constraint is considered more specific than one without, so it wins when both otherwise tie.
+The optional `body` field constrains a coat to requests with a matching body. When omitted, any body (or no body) matches. When set — even to an empty string — only requests whose body matches are selected. A coat with a `body` constraint is considered more specific than one without, so it wins when both otherwise tie.
+
+`body_match` selects how `body` is compared, and requires `body` to be set:
+
+| Mode | Comparison |
+|---|---|
+| `exact` (default) | The body equals `body` exactly. |
+| `glob` | The body matches `body` as a glob pattern. |
+| `contains` | The body contains `body` as a substring. |
+| `regex` | The body matches `body` as a Go regular expression. Validated at load time. |
+
+Glob matching on bodies, header values, and query values uses `path.Match` semantics, where `*` does not match `/`. Use `contains` or `regex` for bodies containing paths or URLs.
 
 ### Response sequences
 
@@ -235,7 +269,6 @@ func TestMyAPI(t *testing.T) {
         }),
     )
     srv.Start(t) // starts on an ephemeral port, registers t.Cleanup for shutdown
-    defer srv.Stop()
 
     resp, err := http.Get(srv.URL + "/api/v1/users")
     if err != nil {
@@ -253,7 +286,7 @@ Key points:
 
 - `srv.Start(t)` binds to `127.0.0.1:0` (ephemeral port), so tests run in parallel without port conflicts.
 - `srv.URL` contains the base URL (e.g. `http://127.0.0.1:54321`) after `Start` is called.
-- Cleanup is registered via `t.Cleanup`, so the server shuts down automatically when the test finishes.
+- Cleanup is registered via `t.Cleanup`, so the server shuts down automatically when the test finishes. `srv.Stop()` is available for shutting down early and is safe to call more than once.
 
 ### Loading coats from files
 
@@ -280,6 +313,48 @@ srv := trenchcoat.NewServer(
         },
     ),
 )
+```
+
+### Server options
+
+| Option | Description |
+|---|---|
+| `WithCoat(Coat)` | Add a single coat definition. |
+| `WithCoats(...Coat)` | Add multiple coat definitions. |
+| `WithCoatFile(path)` | Load coats from a YAML or JSON file. |
+| `WithVerbose()` | Log each incoming request and match result. |
+| `WithTLS(certFile, keyFile)` | Serve HTTPS using an explicit certificate. |
+| `WithSelfSignedTLS()` | Serve HTTPS using a generated certificate, and set `srv.TLSClient` to a client that trusts it. |
+
+`srv.TLSClient` is only guaranteed to be set by `WithSelfSignedTLS`; it may be nil with `WithTLS`.
+
+### Asserting on received requests
+
+The server records every request that matched a coat, keyed by the coat's `Name`, so give any coat you want to assert on a name. Recorded bodies are truncated past 1 MiB (the response the client receives is unaffected).
+
+```go
+srv.AssertCalled(t, "create-widget")        // called at least once
+srv.AssertCalledN(t, "read-widget", 2)      // called exactly twice
+srv.AssertNotCalled(t, "delete-widget")     // never called
+
+for _, req := range srv.Requests("create-widget") {
+    // req.Method, req.URI, req.RawQuery, req.Header, req.Body
+    if !strings.Contains(req.Body, `"name"`) {
+        t.Errorf("expected name in request body, got %s", req.Body)
+    }
+}
+
+srv.ResetCalls() // clear recorded requests between sub-tests
+```
+
+`StringPtr` is a convenience helper for building a `Request` with a body constraint, since `Request.Body` is a `*string`:
+
+```go
+trenchcoat.Request{
+    Method: "POST",
+    URI:    "/api/users",
+    Body:   trenchcoat.StringPtr(`{"name": "alice"}`),
+}
 ```
 
 ### Terraform provider acceptance tests
@@ -316,7 +391,6 @@ func TestAccResourceWidget_basic(t *testing.T) {
         ),
     )
     srv.Start(t)
-    defer srv.Stop()
 
     resource.Test(t, resource.TestCase{
         ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
