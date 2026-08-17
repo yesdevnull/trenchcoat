@@ -152,6 +152,40 @@ class GofmtOnWriteTest(unittest.TestCase):
             sentinel.exists(), "goimports in GOPATH/bin was never invoked"
         )
 
+    def test_finds_goimports_when_gopath_is_a_list(self):
+        """GOPATH is a path list, and `go install` writes to its first entry.
+
+        Joining "bin" onto the raw list yields a directory that cannot exist, so
+        anyone with a multi-entry GOPATH would silently lose goimports.
+        """
+        gopath = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, gopath)
+        second = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, second)
+        empty_home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, empty_home)
+
+        bin_dir = Path(gopath) / "bin"
+        bin_dir.mkdir()
+        sentinel = Path(gopath) / "goimports-ran"
+        fake = bin_dir / "goimports"
+        fake.write_text(f'#!/bin/sh\necho "$@" > "{sentinel}"\n')
+        fake.chmod(0o755)
+
+        path = self.write("main.go", UNFORMATTED_GO)
+        result = run_hook(
+            GOFMT_HOOK,
+            path,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": empty_home,
+                "GOPATH": os.pathsep.join([gopath, second]),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(sentinel.exists(), "first GOPATH entry was never searched")
+
     def test_is_silent_on_success(self):
         """A formatter that chatters on every edit becomes noise to ignore."""
         path = self.write("main.go", UNFORMATTED_GO)
@@ -225,9 +259,16 @@ class CoatSchemaSyncTest(unittest.TestCase):
         self.assertEqual(result.stdout, "")
 
     def test_silent_outside_a_git_repo(self):
+        """A watched path with no repo around it: only the git guard keeps it quiet.
+
+        The fixture mirrors the real internal/coat/types.go layout, so WATCHED
+        cannot be what silences the hook -- given a repo root, this path warns.
+        """
         loose = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, loose)
-        stray = Path(loose) / "types.go"
+        coat_dir = Path(loose) / "internal" / "coat"
+        coat_dir.mkdir(parents=True)
+        stray = coat_dir / "types.go"
         stray.write_text("package coat\n")
 
         result = run_hook(SCHEMA_HOOK, str(stray), cwd=loose)
