@@ -359,6 +359,15 @@ hook warns when you forget.
   and `Accept-Language`. Recording them would tie a coat to the tool that
   captured it — a capture taken with curl would 404 for every other client.
   `Content-Type` and custom headers such as `X-Api-Key` are still captured.
+- Dropping `Accept` and `Accept-Language` has a known cost against a
+  content-negotiating upstream, where those headers select the representation
+  rather than describe the client. Capturing `GET /doc` with
+  `Accept: application/json` and again with `Accept: application/xml` produces
+  the same base name, so under the default `overwrite` the second capture
+  replaces the first and the surviving coat holds the XML body with no `Accept`
+  constraint — replaying the JSON request returns XML. Capture such an upstream
+  one representation at a time, into separate `--write-dir`s, and add the
+  `Accept` header to the coats by hand
 - Headers a peer scopes to one hop by naming them in its `Connection` header
   are withheld from the wire in both directions, and are not captured either —
   a coat recording them would demand, at replay, a header the upstream never
