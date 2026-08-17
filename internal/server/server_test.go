@@ -202,17 +202,25 @@ func TestServe_DelayMs(t *testing.T) {
 }
 
 func TestServe_DelayJitter(t *testing.T) {
+	// Pins the delay range on both sides. The lower bound alone is satisfied by
+	// the base delay, so it says nothing about jitter; the upper bound is what
+	// stops jitter drifting outside the range the coat asked for.
+	const (
+		base   = 50
+		jitter = 50
+		slack  = 250 * time.Millisecond
+	)
+
 	srv := startServer(t, []coat.LoadedCoat{
 		{
 			Coat: coat.Coat{
 				Name:     "jittery",
 				Request:  coat.Request{Method: "GET", URI: "/jitter"},
-				Response: &coat.Response{Code: 200, Body: "ok", DelayMs: 50, DelayJitterMs: 50},
+				Response: &coat.Response{Code: 200, Body: "ok", DelayMs: base, DelayJitterMs: jitter},
 			},
 		},
 	})
 
-	// Make several requests — all should take at least 50ms (the base delay).
 	for range 3 {
 		start := time.Now()
 		resp, err := httpClient.Get(srv.URL() + "/jitter")
@@ -222,30 +230,65 @@ func TestServe_DelayJitter(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		assertEqual(t, "status", 200, resp.StatusCode)
-		if elapsed < 50*time.Millisecond {
-			t.Fatalf("expected at least 50ms delay, got %v", elapsed)
+
+		if elapsed < base*time.Millisecond {
+			t.Fatalf("expected at least the %dms base delay, got %v", base, elapsed)
+		}
+		if elapsed > (base+jitter)*time.Millisecond+slack {
+			t.Fatalf("expected at most %dms plus scheduling slack, got %v", base+jitter, elapsed)
 		}
 	}
 }
 
 func TestServe_DelayJitter_OnlyJitter(t *testing.T) {
-	// Jitter without base delay should still work.
+	// Asserting a 200 proves nothing about jitter: deleting rand.IntN from the
+	// delay path leaves such a test green, and delay_jitter_ms becomes a
+	// documented no-op. With no base delay, any delay observed at all can only
+	// have come from the jitter.
+	//
+	// A single draw can legitimately be near zero, so this takes the largest of
+	// several. Ten draws from [0,300) all landing under 30ms has probability
+	// 1e-10; without jitter every request returns in about a millisecond and the
+	// test fails every time.
+	const (
+		jitter    = 300
+		requests  = 10
+		threshold = 30 * time.Millisecond
+	)
+
 	srv := startServer(t, []coat.LoadedCoat{
 		{
 			Coat: coat.Coat{
 				Name:     "jitter-only",
 				Request:  coat.Request{Method: "GET", URI: "/jitter-only"},
-				Response: &coat.Response{Code: 200, Body: "ok", DelayJitterMs: 10},
+				Response: &coat.Response{Code: 200, Body: "ok", DelayJitterMs: jitter},
 			},
 		},
 	})
 
-	resp, err := httpClient.Get(srv.URL() + "/jitter-only")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
+	var longest time.Duration
+	for range requests {
+		start := time.Now()
+		resp, err := httpClient.Get(srv.URL() + "/jitter-only")
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_ = resp.Body.Close()
+		assertEqual(t, "status", 200, resp.StatusCode)
+
+		if elapsed > longest {
+			longest = elapsed
+		}
+		if elapsed > jitter*time.Millisecond+250*time.Millisecond {
+			t.Fatalf("delay of %v exceeds the %dms jitter ceiling", elapsed, jitter)
+		}
 	}
-	_ = resp.Body.Close()
-	assertEqual(t, "status", 200, resp.StatusCode)
+
+	if longest < threshold {
+		t.Fatalf("no request was delayed more than %v across %d requests (longest %v); delay_jitter_ms appears to have no effect",
+			threshold, requests, longest)
+	}
 }
 
 func TestServe_GlobMatching(t *testing.T) {
