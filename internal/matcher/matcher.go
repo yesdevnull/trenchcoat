@@ -220,12 +220,17 @@ func resolveSequence(best *entry) (idx int, exhausted bool) {
 		seq = "cycle"
 	}
 
-	if seq == "once" && idx >= len(best.coat.Responses) {
-		return -1, true
-	}
-
-	if seq == "cycle" {
-		idx = idx % len(best.coat.Responses)
+	if seq == "once" {
+		if idx >= len(best.coat.Responses) {
+			return -1, true
+		}
+	} else {
+		// Anything that is not "once" cycles. Validation restricts this field to
+		// "once" and "cycle", but only for coats loaded from a file: the
+		// programmatic API accepts a Coat as given, so an unrecognised value
+		// such as "Once" must not walk the counter off the end of Responses and
+		// panic the server that indexes it.
+		idx %= len(best.coat.Responses)
 	}
 
 	best.seqCounter++
