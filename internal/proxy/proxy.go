@@ -451,8 +451,16 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 		coatDef.Coats[0].Request.Query = req.RawQuery
 	}
 
-	// Generate filename.
-	filename := p.generateFilename(req.Method, req.URI, resp.StatusCode)
+	// Choosing the filename and writing it must be one atomic step. Selection
+	// asks whether a file already exists (dedupe=skip) and hands out a name
+	// stamped with the current second; if another capture can slip between the
+	// question and the write, two concurrent captures of the same request both
+	// see nothing on disk and, if they straddle a second boundary, write two
+	// files where skip promises one.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	filename := p.generateFilenameLocked(req.Method, req.URI, resp.StatusCode)
 	if filename == "" {
 		// Skip dedup — file already exists.
 		return
@@ -501,7 +509,11 @@ type nameTemplateData struct {
 	Status int
 }
 
-func (p *Proxy) generateFilename(method, urlPath string, status int) string {
+// generateFilenameLocked picks the filename for a capture. The caller must hold
+// p.mu and must still hold it when it writes the file: for dedupe=skip the
+// returned name is only correct as long as nothing else writes in between.
+// It returns "" when dedupe=skip and a capture for this request already exists.
+func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) string {
 	ts := time.Now().Unix()
 	sanitised := SanitisePath(urlPath)
 
@@ -532,9 +544,6 @@ func (p *Proxy) generateFilename(method, urlPath string, status int) string {
 	} else {
 		base = fmt.Sprintf("%s_%s_%d", method, sanitised, status)
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	switch p.config.Dedupe {
 	case "skip":
