@@ -1121,6 +1121,154 @@ func TestProxy_ShutdownWritesInFlightCaptures(t *testing.T) {
 	}
 }
 
+func TestProxy_ConcurrentCapturesSameBaseName(t *testing.T) {
+	// The query string is deliberately excluded from the generated base name, so
+	// two concurrent requests differing only by query resolve to one filename
+	// and race to write it. Whichever wins, the file must be a complete coat --
+	// never one response's prefix followed by the other's tail.
+	//
+	// This holds today because os.WriteFile issues a single write syscall and
+	// the kernel serialises writes to a regular file. It is an invariant worth
+	// pinning: chunking the write, or switching to an io.Writer, would break it
+	// silently and leave unparseable fixtures behind.
+	long := strings.Repeat("A", 200*1024)
+	short := strings.Repeat("B", 64)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := short
+		if r.URL.Query().Get("page") == "1" {
+			body = long
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(10 * time.Second) })
+
+	for range 40 {
+		var wg sync.WaitGroup
+		for _, page := range []string{"1", "2"} {
+			wg.Add(1)
+			go func(page string) {
+				defer wg.Done()
+				resp, err := httpClient.Get(p.URL() + "/api/items?page=" + page)
+				if err != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}(page)
+		}
+		wg.Wait()
+		p.WaitCaptures()
+
+		captured := readOnlyCoat(t, writeDir)
+		body := captured.Coats[0].Response.Body
+		if body != long && body != short {
+			t.Fatalf("captured coat body is neither response intact: %d bytes, starts %q, ends %q",
+				len(body), truncate(body, 16), truncate(body[max(0, len(body)-16):], 16))
+		}
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+func TestProxy_DedupeSkip_ConcurrentSameRequest(t *testing.T) {
+	// 'skip' promises one file per distinct request. The existence check runs
+	// under the lock but the write does not, so concurrent captures of the same
+	// request can all pass the check; they converge on one filename because the
+	// name carries a one-second-resolution timestamp. Pin both halves of that:
+	// one file, and its contents intact.
+	const requests = 16
+
+	// Hold every request in the upstream until all of them have arrived, so the
+	// captures start together and genuinely overlap. Without this the first
+	// capture finishes before the next request is even made, and the check and
+	// the write never interleave. The body is large enough that marshalling and
+	// writing it takes long enough to matter.
+	release := make(chan struct{})
+	var arrived sync.WaitGroup
+	arrived.Add(requests)
+	body := strings.Repeat("C", 512*1024)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived.Done()
+		<-release
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "skip",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(10 * time.Second) })
+
+	var wg sync.WaitGroup
+	for range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := httpClient.Get(p.URL() + "/api/items")
+			if err != nil {
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}()
+	}
+	arrived.Wait()
+	close(release)
+	wg.Wait()
+	p.WaitCaptures()
+
+	files, err := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+	if err != nil {
+		t.Fatalf("failed to glob: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("dedupe=skip wrote %d files for the same request, want 1: %v", len(files), files)
+	}
+
+	captured := readOnlyCoat(t, writeDir)
+	if got := captured.Coats[0].Response.Body; got != body {
+		t.Fatalf("captured body is torn: got %d bytes, want %d", len(got), len(body))
+	}
+}
+
 func TestProxy_PrettyJSON_DropsContentLength(t *testing.T) {
 	// Pretty-printing changes the body length, so the upstream's Content-Length
 	// no longer describes the captured body and must not be recorded.
