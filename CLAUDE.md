@@ -372,6 +372,11 @@ hook warns when you forget.
   are withheld from the wire in both directions, and are not captured either —
   a coat recording them would demand, at replay, a header the upstream never
   saw
+- A captured path containing a glob metacharacter (`*`, `?`, `[`) is recorded
+  with those characters **escaped**, so the coat means the path it was captured
+  from: `/api/items[abc]` is recorded as `/api/items\[abc\]`. Left unescaped it
+  would be read as a character class, and an unbalanced bracket would not
+  compile at all. Paths without a metacharacter are recorded verbatim
 - Captured `request.uri` is the **decoded** path, so `/files/dir%2Ffile` and
   `/files/dir/file` produce one coat even though they are different requests
   upstream; with `--dedupe skip` the second is discarded. Forwarding preserves
