@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1252,7 +1253,118 @@ coats:
 	}
 }
 
+func TestWatchCoats_ReloadFailureIsLoggedAsAnError(t *testing.T) {
+	// A reload that loses coats is worse than a startup that never loaded them:
+	// the server is already taking traffic, and a route it answered a moment ago
+	// starts 404ing with nothing in the response pointing at the cause. Strict
+	// parsing makes a file that was tolerated for months start failing
+	// mid-session, so the reload path has to be as loud as the startup path --
+	// an ERROR per failure and a summary carrying the count, not a Warn under a
+	// reassuring reload line.
+	dir := t.TempDir()
+	coatFile := filepath.Join(dir, "coat.yaml")
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "served"
+    request:
+      uri: "/served"
+    response:
+      code: 200
+      body: "here"
+`)
+
+	var out lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&out, nil))
+	loaded, errs := coat.LoadPaths([]string{dir})
+	if len(errs) > 0 {
+		t.Fatalf("LoadPaths errors: %v", errs)
+	}
+	srv := server.New(loaded, server.Config{Logger: logger})
+	if _, err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		watchCoats(ctx, logger, srv, []string{dir})
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	// Rewrite the file with a misspelt key. Strict parsing rejects the whole
+	// file, so /served stops being served on the next reload.
+	writeTestFile(t, coatFile, `
+coats:
+  - name: "served"
+    request:
+      mehtod: GET
+      uri: "/served"
+    response:
+      code: 200
+      body: "here"
+`)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		logs := out.String()
+		if logLineHasAll(logs, "level=ERROR", "coat reload error") && logLineHasAll(logs, "level=ERROR", "errors=1") {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("a failed reload must log the failure and a summary at ERROR; log was:\n%s", logs)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for watchCoats to return")
+	}
+}
+
 // --- helpers ---
+
+// logLineHasAll reports whether any single line of logs contains every
+// substring, so a level assertion cannot be satisfied by a different line.
+func logLineHasAll(logs string, substrings ...string) bool {
+	for _, line := range strings.Split(logs, "\n") {
+		matched := true
+		for _, s := range substrings {
+			if !strings.Contains(line, s) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+// lockedBuffer is an io.Writer a test can read while a logger on another
+// goroutine is still writing to it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()

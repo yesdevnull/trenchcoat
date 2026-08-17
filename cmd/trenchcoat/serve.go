@@ -186,10 +186,19 @@ func watchCoats(ctx context.Context, logger *slog.Logger, srv *server.Server, co
 			for _, w := range reloadResult.Warnings {
 				logger.Warn("coat validation warning", "warning", w)
 			}
+			// Load failures are logged at Error for the same reason as on
+			// startup, and with more cause: the server is already taking
+			// traffic, so a file that stops parsing takes routes that were
+			// being answered a moment ago out of service. The summary carries
+			// the error count too, so the reload count on its own cannot read
+			// as a clean reload.
 			for _, e := range reloadResult.Errors {
-				logger.Warn("reload error", "error", e)
+				logger.Error("coat reload error", "error", e)
 			}
 			srv.Reload(reloadResult.Coats)
+			if len(reloadResult.Errors) > 0 {
+				logger.Error("coats reloaded with errors", "count", len(reloadResult.Coats), "errors", len(reloadResult.Errors))
+			}
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return
