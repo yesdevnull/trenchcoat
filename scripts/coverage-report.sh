@@ -48,6 +48,20 @@ while [ $# -gt 0 ]; do
 			echo "error: --min needs a percentage, e.g. --min 90" >&2
 			exit 2
 		}
+		# awk coerces a non-numeric limit to 0, so a typo would list nothing and
+		# read as "every function is covered" -- the most misleading answer this
+		# script could give. Reject it here instead. Decimals are allowed
+		# because `go tool cover` reports to one decimal place.
+		case "$2" in
+		'' | . | *[!0-9.]* | *.*.*)
+			echo "error: --min takes a percentage, got '$2'" >&2
+			exit 2
+			;;
+		esac
+		awk -v limit="$2" 'BEGIN { exit !(limit >= 0 && limit <= 100) }' || {
+			echo "error: --min must be between 0 and 100, got '$2'" >&2
+			exit 2
+		}
 		min_coverage="$2"
 		show_functions=true
 		shift 2
@@ -92,7 +106,13 @@ echo "Coverage by package"
 echo "-------------------"
 # `go test` prints a coverage line per package; the log is the only place that
 # survives, since the run above was redirected.
-grep -E '^(ok|---)' "$LOG" | sed -E 's/[[:space:]]+/ /g' | sort
+#
+# Match on "coverage:" rather than a leading "ok", because a package with no
+# test files reports as a tab-indented line with no prefix at all --
+# "\tpkg\t\tcoverage: 0.0% of statements" -- and anchoring on "ok" drops it.
+# Silently omitting the untested packages from a coverage report is the one
+# thing this table must not do.
+grep 'coverage:' "$LOG" | sed -E 's/[[:space:]]+/ /g; s/^ //' | sort
 
 echo ""
 total=$(go tool cover -func="$PROFILE" | awk '$1 == "total:" { print $NF }')
