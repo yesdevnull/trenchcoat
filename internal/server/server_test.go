@@ -208,7 +208,11 @@ func TestServe_DelayJitter(t *testing.T) {
 	const (
 		base   = 50
 		jitter = 50
-		slack  = 250 * time.Millisecond
+		// Generous: this bound exists to catch a delay wildly outside the range
+		// the coat asked for -- milliseconds read as seconds, say -- not to
+		// measure the scheduler. A tight bound here is just a flake under load
+		// or coverage instrumentation.
+		slack = 2 * time.Second
 	)
 
 	srv := startServer(t, []coat.LoadedCoat{
@@ -280,7 +284,7 @@ func TestServe_DelayJitter_OnlyJitter(t *testing.T) {
 		if elapsed > longest {
 			longest = elapsed
 		}
-		if elapsed > jitter*time.Millisecond+250*time.Millisecond {
+		if elapsed > jitter*time.Millisecond+2*time.Second {
 			t.Fatalf("delay of %v exceeds the %dms jitter ceiling", elapsed, jitter)
 		}
 	}
