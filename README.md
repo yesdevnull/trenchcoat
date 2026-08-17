@@ -90,11 +90,13 @@ trenchcoat proxy <upstream-url> [flags]
 | `--write-dir` | `.` | Directory to write captured coat files to. Created if it doesn't exist. |
 | `--filter` | | Only capture requests whose URI matches this glob (e.g. `/api/*`). Empty captures all. |
 | `--strip-headers` | `Authorization,Cookie,Set-Cookie` | Headers to redact from captured coats. Set to empty string to disable. |
+| `--no-headers` | `false` | Omit all headers from captured coat files. Mutually exclusive with `--strip-headers`. |
 | `--capture-body` | `true` | Capture request body in coat files for any request with a body. |
 | `--dedupe` | `overwrite` | Deduplication strategy: `overwrite`, `skip`, or `append`. |
-| `--tls-cert` | | Path to TLS certificate file (PEM). |
-| `--tls-key` | | Path to TLS private key file (PEM). |
-| `--tls-ca` | | Path to CA certificate chain (PEM). |
+| `--pretty-json` | `false` | Pretty-print JSON response bodies in captured coat files. |
+| `--body-file-threshold` | `0` | Write response bodies larger than N bytes to separate files. `0` always inlines. |
+| `--name-template` | | Custom template for captured coat file names (e.g. `{{.Method}}-{{.Path}}-{{.Status}}`). |
+| `--tls-server-name` | | Verify the upstream TLS certificate against this hostname instead of the upstream URL host. Also sets SNI. |
 | `--verbose` | `false` | Log each proxied request and capture event. |
 | `--log-format` | `text` | Log output format: `text` or `json`. |
 
@@ -142,6 +144,7 @@ proxy:
     - Set-Cookie
   dedupe: overwrite
   filter: "/api/*"
+  tls_server_name: api.internal.example.com
 ```
 
 ## Coat file format
