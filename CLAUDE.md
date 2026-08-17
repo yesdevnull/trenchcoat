@@ -53,8 +53,10 @@ renovate.json             Renovate dependency auto-update config
 
 ### Requirements
 
-- Go 1.25.x (pinned in CI: 1.25.7)
-- golangci-lint v2.10.1+
+- Go 1.25.x. The exact patch release lives in the `toolchain` directive in
+  `go.mod`; CI installs it via `go-version-file: go.mod`, and Renovate bumps it.
+  The `go` directive stays at `1.25` as the minimum for consumers of the package.
+- golangci-lint v2.11.4 (pinned in CI)
 
 ### Installing Go
 
@@ -63,13 +65,13 @@ due to DNS/network restrictions), install manually:
 
 ```bash
 # Download (linux/amd64 — adjust for your platform)
-curl -fSL -o /tmp/go1.25.8.linux-amd64.tar.gz "https://go.dev/dl/go1.25.8.linux-amd64.tar.gz"
+curl -fSL -o /tmp/go1.25.13.linux-amd64.tar.gz "https://go.dev/dl/go1.25.13.linux-amd64.tar.gz"
 
 # Install (removes any previous Go installation in /usr/local/go)
-rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go1.25.8.linux-amd64.tar.gz
+rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go1.25.13.linux-amd64.tar.gz
 
 # Verify
-go version   # should print "go version go1.25.8 linux/amd64"
+go version   # should print "go version go1.25.13 linux/amd64"
 ```
 
 Ensure `/usr/local/go/bin` is in your `PATH`.

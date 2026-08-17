@@ -2,6 +2,8 @@ module github.com/yesdevnull/trenchcoat
 
 go 1.25
 
+toolchain go1.25.13
+
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/fsnotify/fsnotify v1.9.0
