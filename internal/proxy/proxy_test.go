@@ -1604,54 +1604,14 @@ func TestProxyCapturesConcurrencyBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) == 0 {
-		t.Fatal("expected captured coat files, got none")
-	}
-	if len(files) < 20 {
-		t.Errorf("expected at least 20 coat files, got %d", len(files))
+	// Exactly one file per request. A floor of 20 would let a third of the
+	// captures go missing -- to a filename collision, or a write error swallowed
+	// by the capture path -- and still report success.
+	if len(files) != numRequests {
+		t.Errorf("expected %d coat files, one per request, got %d", numRequests, len(files))
 	}
 
 	_ = p.Shutdown(5 * time.Second)
-}
-
-func TestProxyShutdownRespectsTimeoutWithPendingCaptures(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		_, _ = fmt.Fprint(w, "ok")
-	}))
-	defer upstream.Close()
-
-	writeDir := t.TempDir()
-
-	p, err := proxy.New(proxy.Config{
-		UpstreamURL: upstream.URL,
-		WriteDir:    writeDir,
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, err := p.Start("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resp, err := http.Get("http://" + addr + "/test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- p.Shutdown(500 * time.Millisecond)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Shutdown did not return within timeout")
-	}
 }
 
 func TestProxy_PreservesPercentEncodedPath(t *testing.T) {

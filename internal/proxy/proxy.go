@@ -76,6 +76,7 @@ type Proxy struct {
 
 	mu       sync.Mutex
 	counters map[string]int // for append dedup mode
+	inflight map[string]int // base names currently being written, by capture count
 
 	captures   sync.WaitGroup
 	captureSem chan struct{} // bounds concurrent capture goroutines
@@ -161,6 +162,7 @@ func New(cfg Config) (*Proxy, error) {
 			},
 		},
 		counters:   make(map[string]int),
+		inflight:   make(map[string]int),
 		captureSem: make(chan struct{}, 20),
 	}
 
@@ -460,20 +462,19 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 		coatDef.Coats[0].Request.Query = req.RawQuery
 	}
 
-	// Choosing the filename and writing it must be one atomic step. Selection
-	// asks whether a file already exists (dedupe=skip) and hands out a name
-	// stamped with the current second; if another capture can slip between the
-	// question and the write, two concurrent captures of the same request both
-	// see nothing on disk and, if they straddle a second boundary, write two
-	// files where skip promises one.
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	filename := p.generateFilenameLocked(req.Method, req.URI, resp.StatusCode)
+	// Reserve the filename, which both picks it and records that this capture is
+	// about to write it. dedupe=skip asks whether a file already exists, and the
+	// answer is only meaningful if concurrent captures of the same request can
+	// see each other's intent -- otherwise they all look at an empty directory
+	// and, if they straddle a second boundary (the name carries a
+	// one-second-resolution timestamp), write several files where skip promises
+	// one.
+	filename, base := p.reserveFilename(req.Method, req.URI, resp.StatusCode)
 	if filename == "" {
-		// Skip dedup — file already exists.
+		// Skip dedup — file already exists or is being written.
 		return
 	}
+	defer p.releaseFilename(base)
 
 	// Write body to a separate file if threshold is exceeded.
 	if p.config.BodyFileThreshold > 0 && len(responseBody) > p.config.BodyFileThreshold {
@@ -518,11 +519,45 @@ type nameTemplateData struct {
 	Status int
 }
 
-// generateFilenameLocked picks the filename for a capture. The caller must hold
-// p.mu and must still hold it when it writes the file: for dedupe=skip the
-// returned name is only correct as long as nothing else writes in between.
-// It returns "" when dedupe=skip and a capture for this request already exists.
-func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) string {
+// reserveFilename picks the filename for a capture and records that this
+// capture is writing it, returning the filename and the base name to release
+// once the write has finished. It returns "" when dedupe=skip and a capture for
+// this request already exists on disk or is in flight.
+//
+// Only the decision is serialised, not the write. Holding p.mu across the write
+// would make every capture wait for whichever one is currently touching the
+// disk -- so a single slow write stalls all of them, and captureSem's bound of
+// 20 concurrent captures becomes unreachable.
+func (p *Proxy) reserveFilename(method, urlPath string, status int) (filename, base string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	filename, base = p.generateFilenameLocked(method, urlPath, status)
+	if filename == "" {
+		return "", ""
+	}
+
+	p.inflight[base]++
+	return filename, base
+}
+
+// releaseFilename records that a capture has finished writing base.
+func (p *Proxy) releaseFilename(base string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.inflight[base] <= 1 {
+		delete(p.inflight, base)
+		return
+	}
+	p.inflight[base]--
+}
+
+// generateFilenameLocked picks the filename for a capture, returning it
+// alongside the base name it was derived from. The caller must hold p.mu.
+// It returns "" when dedupe=skip and a capture for this request already exists
+// on disk or is in flight.
+func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) (string, string) {
 	ts := time.Now().Unix()
 	sanitised := SanitisePath(urlPath)
 
@@ -559,20 +594,26 @@ func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) strin
 		// Check if a file with this base already exists (any naming scheme).
 		matches, _ := filepath.Glob(filepath.Join(p.config.WriteDir, base+"*.yaml"))
 		if len(matches) > 0 {
-			return "" // Signal to skip.
+			return "", "" // Signal to skip.
 		}
-		return fmt.Sprintf("%s_%d.yaml", base, ts)
+		// A capture already writing this base has not appeared on disk yet, but
+		// it is just as much a reason to skip: without this, concurrent captures
+		// of one request all see an empty directory and each write a file.
+		if p.inflight[base] > 0 {
+			return "", ""
+		}
+		return fmt.Sprintf("%s_%d.yaml", base, ts), base
 
 	case "append":
 		counter := p.counters[base]
 		p.counters[base] = counter + 1
 		if counter == 0 {
-			return fmt.Sprintf("%s_%d.yaml", base, ts)
+			return fmt.Sprintf("%s_%d.yaml", base, ts), base
 		}
-		return fmt.Sprintf("%s_%d_%d.yaml", base, counter, ts)
+		return fmt.Sprintf("%s_%d_%d.yaml", base, counter, ts), base
 
 	default: // overwrite
-		return fmt.Sprintf("%s.yaml", base)
+		return fmt.Sprintf("%s.yaml", base), base
 	}
 }
 
