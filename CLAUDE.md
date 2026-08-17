@@ -29,6 +29,8 @@ internal/
     query.go              QueryField YAML/JSON unmarshalling
   config/                 Viper-based config file loading
     config.go             Config discovery: --config > .trenchcoat.yaml > ~/.config/trenchcoat/config.yaml
+  httputil/               Shared HTTP helpers
+    body.go               ReconstitutedBody: replay a consumed body for downstream readers
   matcher/                Request matching engine (exact, glob, regex URI)
     matcher.go            Match logic, precedence scoring, sequence state
   proxy/                  Proxy capture server
@@ -44,6 +46,7 @@ docs/
   test-coverage-analysis.md  Coverage report and test inventory
 trenchcoat.go             Public API package for Go test integration
 trenchcoat_test.go        Public API tests
+coatfile.schema.json      JSON Schema for coat files (hand-maintained — see Validation Rules)
 .github/workflows/ci.yaml  CI pipeline (test, lint, vet, format, build)
 .goreleaser.yaml          GoReleaser config for cross-platform releases
 renovate.json             Renovate dependency auto-update config
@@ -189,6 +192,24 @@ coats:
     sequence: cycle                  # cycle (default) or once
 ```
 
+### Response Body Templating
+
+Response bodies containing `{{` are rendered as a Go `text/template` with request
+context, after `body_file` resolution — so `body_file` contents are templated too.
+Available fields and methods:
+
+| Field            | Meaning                                              |
+|------------------|------------------------------------------------------|
+| `.Method`        | Request method                                       |
+| `.Path`          | Request URL path                                     |
+| `.Body`          | Request body (capped at `maxRecordBodySize`)         |
+| `.Query "page"`  | First value of a query parameter, `""` if absent     |
+| `.Segment 3`     | Nth path segment, 0-indexed from root, `""` if absent|
+
+A body that legitimately contains `{{` will be treated as a template. Parse
+failures return the body unrendered and silently; execution failures log a
+warning and return the body unrendered.
+
 ### URI Matching Modes
 
 | Mode  | Syntax            | Example                    |
@@ -206,6 +227,14 @@ coats:
 4. Regex URI (file-definition order)
 5. `method: ANY` ranks below method-specific at same specificity
 
+Specificity is the count of qualifiers on the request: headers, query fields, and
+body presence.
+
+### Unmatched Requests
+
+Requests that match no coat, and requests hitting an exhausted `once` sequence,
+both return **404** with a JSON body (`{"error": ...}`).
+
 ### Validation Rules
 
 - `request.uri` is required
@@ -213,6 +242,19 @@ coats:
 - `body` and `body_file` are mutually exclusive (in both singular and plural forms)
 - `sequence` is only valid with `responses` (plural), must be `cycle` or `once`
 - Regex URIs (`~/` prefix) must compile as valid Go regexps
+- `body_match` must be `exact`, `glob`, `contains` or `regex`, and requires
+  `request.body` to be set; with `regex`, the body must compile as a Go regexp
+- `body_file` must be a relative path with no `..` components
+- `delay_ms` and `delay_jitter_ms` must be non-negative, and combined must not
+  exceed `coat.MaxDelayMs` (60000)
+
+`ValidateWithWarnings` also returns non-fatal **warnings** alongside errors:
+duplicate coat names, and regex URIs simple enough to be expressed as globs.
+`Validate` returns the errors only.
+
+`coatfile.schema.json` duplicates this schema for editor completion. Nothing in
+the build or test suite enforces that it stays in sync — when you add or change
+a coat field, update it by hand in the same commit.
 
 ### Key Dependencies
 
@@ -259,6 +301,9 @@ srv := trenchcoat.NewServer(
 srv.Start(t) // registers t.Cleanup to stop the server
 // srv.URL contains "http://127.0.0.1:<port>"
 ```
+
+`Request.Body` is a `*string` so an empty body can be distinguished from no body
+constraint — use `trenchcoat.StringPtr("...")` to set it.
 
 Available options:
 - `WithCoat(Coat)` — add a single coat
