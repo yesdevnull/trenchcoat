@@ -1021,11 +1021,9 @@ func TestProxy_ConcurrentCapturesSameBaseName(t *testing.T) {
 	// and race to write it. Whichever wins, the file must be a complete coat --
 	// never one response's prefix followed by the other's tail.
 	//
-	// os.WriteFile is open(O_TRUNC) then write, and nothing pairs the truncate
-	// with the write: two of them on one path can interleave as A-open, B-open
-	// (truncating), A-write, B-write, leaving B's bytes over the head of A's.
-	// The writes must therefore be atomic with respect to each other, which is
-	// what writing to a temp file and renaming buys.
+	// Two things combine to give that: writes go to a temp file and are renamed
+	// into place, which is atomic, and captures resolving to the same name are
+	// serialised so they do not share that temp file.
 	//
 	// Both responses are the same size and both requests are released together,
 	// so the two writes actually overlap. An earlier version of this test used
@@ -2073,5 +2071,123 @@ func TestProxy_ShutdownBeforeStartIsNotAnError(t *testing.T) {
 
 	if err := p.Shutdown(time.Second); err != nil {
 		t.Fatalf("Shutdown before Start should be a no-op, got %v", err)
+	}
+}
+
+func TestProxy_CaptureIsNeverVisiblePartiallyWritten(t *testing.T) {
+	// A coat file is read by other processes while the proxy is writing it --
+	// `trenchcoat serve --watch` pointed at the same directory is the obvious
+	// case, and `trenchcoat validate` the other. os.WriteFile truncates and then
+	// writes, so a reader that opens the file in between sees a prefix of the
+	// new content, or nothing at all, and a coat file half a response long is
+	// not valid YAML.
+	//
+	// Writing to a temp file and renaming makes the swap atomic: a reader sees
+	// either the whole previous capture or the whole new one.
+	body := strings.Repeat("A", 256*1024)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(10 * time.Second) })
+
+	coatPath := filepath.Join(writeDir, "GET_api_items_200.yaml")
+
+	// Poll the coat file the way a watching process would, and record any read
+	// that produced something unparseable or short.
+	stop := make(chan struct{})
+	var readerWG sync.WaitGroup
+	var mu sync.Mutex
+	var reads, bad int
+	var firstBad string
+
+	readerWG.Add(1)
+	go func() {
+		defer readerWG.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+
+			content, err := os.ReadFile(coatPath)
+			if err != nil {
+				continue // Not written yet; a missing file is not a torn one.
+			}
+
+			var parsed coat.File
+			problem := ""
+			switch {
+			case yaml.Unmarshal(content, &parsed) != nil:
+				problem = "not valid YAML"
+			case len(parsed.Coats) != 1:
+				problem = fmt.Sprintf("%d coats", len(parsed.Coats))
+			case parsed.Coats[0].Response == nil:
+				problem = "no response"
+			case len(parsed.Coats[0].Response.Body) != len(body):
+				problem = fmt.Sprintf("body is %d bytes, want %d", len(parsed.Coats[0].Response.Body), len(body))
+			}
+
+			mu.Lock()
+			reads++
+			if problem != "" {
+				bad++
+				if firstBad == "" {
+					firstBad = problem
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
+	// Keep the captures overlapping rather than waiting for each one: the window
+	// a reader can fall into is the write itself, so back-to-back rewrites are
+	// what make it reachable at all.
+	var clients sync.WaitGroup
+	for range 8 {
+		clients.Add(1)
+		go func() {
+			defer clients.Done()
+			for range 40 {
+				resp, err := httpClient.Get(p.URL() + "/api/items")
+				if err != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+	clients.Wait()
+	p.WaitCaptures()
+
+	close(stop)
+	readerWG.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if reads == 0 {
+		t.Fatal("the reader never managed to read the coat file, so this proves nothing")
+	}
+	if bad > 0 {
+		t.Fatalf("%d of %d reads saw a partially written coat file (first: %s); a watching process would load a broken fixture",
+			bad, reads, firstBad)
 	}
 }

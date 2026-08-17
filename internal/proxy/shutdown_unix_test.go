@@ -59,8 +59,9 @@ func TestProxy_ShutdownWaitsForCaptureFromInFlightRequest(t *testing.T) {
 	writeDir := t.TempDir()
 
 	// With dedupe=overwrite the capture path is fully determined: METHOD,
-	// sanitised URL path, status. Put a FIFO there so the write blocks.
-	coatPath := filepath.Join(writeDir, "GET_blocked_200.yaml")
+	// sanitised URL path, status. The FIFO goes where the capture actually
+	// writes -- the temp file it renames from -- so the write blocks there.
+	coatPath := blockingPathFor(writeDir, "GET_blocked_200.yaml")
 	if err := syscall.Mkfifo(coatPath, 0600); err != nil {
 		t.Fatalf("failed to create fifo at %s: %v", coatPath, err)
 	}
@@ -168,7 +169,7 @@ func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
 	defer upstream.Close()
 
 	writeDir := t.TempDir()
-	coatPath := filepath.Join(writeDir, "GET_blocked_200.yaml")
+	coatPath := blockingPathFor(writeDir, "GET_blocked_200.yaml")
 	if err := syscall.Mkfifo(coatPath, 0600); err != nil {
 		t.Fatalf("failed to create fifo at %s: %v", coatPath, err)
 	}
@@ -227,6 +228,21 @@ func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
 	}
 	waitOrFail(t, &parkedRequest, 30*time.Second, "the parked request to finish")
 
+	// The capture this test deliberately abandoned is now unblocked and about to
+	// rename its temp file into the write directory. Let it finish before the
+	// test returns, or t.TempDir's cleanup races the rename and fails with
+	// "directory not empty".
+	captures := make(chan struct{})
+	go func() {
+		p.WaitCaptures()
+		close(captures)
+	}()
+	select {
+	case <-captures:
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for the released capture to finish")
+	}
+
 	if shutdownErr == nil {
 		t.Fatal("expected Shutdown to report the HTTP drain deadline")
 	}
@@ -254,4 +270,14 @@ func waitOrFail(t *testing.T, wg *sync.WaitGroup, within time.Duration, what str
 	case <-time.After(within):
 		t.Fatalf("timed out after %s waiting for %s", within, what)
 	}
+}
+
+// blockingPathFor returns the path a capture for coatName writes before
+// renaming it into place. Placing a FIFO there parks the capture in its write.
+//
+// Captures write to a temp file and rename, so a FIFO at the destination is
+// never opened and cannot block anything -- the block has to sit where the
+// bytes actually go. The name mirrors proxy.tempPathFor.
+func blockingPathFor(dir, coatName string) string {
+	return filepath.Join(dir, "."+coatName+".tmp")
 }
