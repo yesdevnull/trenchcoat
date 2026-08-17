@@ -92,6 +92,22 @@ func TestProxy_ShutdownWaitsForCaptureFromInFlightRequest(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, fifo)
 		_ = fifo.Close()
+
+		// The capture this test deliberately abandons is now released, and its
+		// next move is to rename its temp file into the write directory that
+		// t.TempDir's cleanup -- registered earlier, so running later -- is
+		// about to remove. Wait for it, or that removal can fail with
+		// "directory not empty". The sibling test below guards the same hazard.
+		captures := make(chan struct{})
+		go func() {
+			p.WaitCaptures()
+			close(captures)
+		}()
+		select {
+		case <-captures:
+		case <-time.After(30 * time.Second):
+			t.Error("timed out waiting for the released capture to finish")
+		}
 	})
 
 	client := &http.Client{Timeout: 30 * time.Second}
