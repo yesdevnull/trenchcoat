@@ -12,6 +12,8 @@ because the whole value of these hooks is that they agree with the tools CI
 runs.
 """
 
+from __future__ import annotations  # match the hooks: runnable on Python 3.9
+
 import json
 import os
 import shutil
@@ -25,7 +27,12 @@ GOFMT_HOOK = HOOKS_DIR / "gofmt-on-write.py"
 SCHEMA_HOOK = HOOKS_DIR / "coat-schema-sync.py"
 
 
-def run_hook(hook: Path, file_path: str, cwd: str | None = None):
+def run_hook(
+    hook: Path,
+    file_path: str,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+):
     """Invoke a hook with a PostToolUse payload, returning the CompletedProcess."""
     payload = json.dumps(
         {
@@ -40,6 +47,7 @@ def run_hook(hook: Path, file_path: str, cwd: str | None = None):
         capture_output=True,
         text=True,
         cwd=cwd,
+        env=env,
     )
 
 
@@ -112,6 +120,37 @@ class GofmtOnWriteTest(unittest.TestCase):
         result = run_hook(GOFMT_HOOK, os.path.join(self.tmp, "gone.go"))
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_finds_goimports_under_a_non_default_gopath(self):
+        """goimports lives in GOPATH/bin, which is not always ~/go/bin.
+
+        PATH is stripped to the system default and HOME is redirected at an
+        empty directory, so the only way to reach the formatter is by honouring
+        GOPATH. CI images and devcontainers routinely set it elsewhere.
+        """
+        gopath = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, gopath)
+        empty_home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, empty_home)
+
+        bin_dir = Path(gopath) / "bin"
+        bin_dir.mkdir()
+        sentinel = Path(gopath) / "goimports-ran"
+        fake = bin_dir / "goimports"
+        fake.write_text(f'#!/bin/sh\necho "$@" > "{sentinel}"\n')
+        fake.chmod(0o755)
+
+        path = self.write("main.go", UNFORMATTED_GO)
+        result = run_hook(
+            GOFMT_HOOK,
+            path,
+            env={"PATH": "/usr/bin:/bin", "HOME": empty_home, "GOPATH": gopath},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(
+            sentinel.exists(), "goimports in GOPATH/bin was never invoked"
+        )
 
     def test_is_silent_on_success(self):
         """A formatter that chatters on every edit becomes noise to ignore."""

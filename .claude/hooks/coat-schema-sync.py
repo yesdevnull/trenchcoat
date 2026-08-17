@@ -17,10 +17,13 @@ real -- a hook that fires on every edit is a hook people learn to ignore.
 Test with: python3 .claude/hooks/test_hooks.py
 """
 
+from __future__ import annotations  # hooks may run under macOS system Python 3.9
+
 import json
 import os
 import subprocess
 import sys
+from pathlib import PurePath
 
 SCHEMA = "coatfile.schema.json"
 WATCHED = ("internal/coat/types.go", "internal/coat/validate.go")
@@ -84,7 +87,9 @@ def main() -> int:
         return 0
     repo_root = os.path.realpath(root.strip())
 
-    relative = os.path.relpath(path, repo_root)
+    # as_posix(): relpath yields OS-native separators, so on Windows this would
+    # be internal\coat\types.go and never match the forward-slash WATCHED entries.
+    relative = PurePath(os.path.relpath(path, repo_root)).as_posix()
     if relative not in WATCHED:
         return 0
 
