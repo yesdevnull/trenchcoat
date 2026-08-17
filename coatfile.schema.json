@@ -4,7 +4,9 @@
   "title": "Trenchcoat Coat File",
   "description": "Schema for Trenchcoat coat files defining HTTP request/response mocks.",
   "type": "object",
-  "required": ["coats"],
+  "required": [
+    "coats"
+  ],
   "additionalProperties": false,
   "properties": {
     "coats": {
@@ -15,11 +17,18 @@
       }
     }
   },
+  "patternProperties": {
+    "^x-": {
+      "description": "Extension key ignored by Trenchcoat. Exists so a coat file can hold a YAML anchor for coats to merge in; any other unknown top-level key is a parse error."
+    }
+  },
   "$defs": {
     "coat": {
       "description": "An individual request/response mock definition.",
       "type": "object",
-      "required": ["request"],
+      "required": [
+        "request"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -43,19 +52,26 @@
         "sequence": {
           "description": "Sequence mode for plural responses. Only valid with 'responses'.",
           "type": "string",
-          "enum": ["cycle", "once"]
+          "enum": [
+            "cycle",
+            "once"
+          ]
         }
       },
       "oneOf": [
         {
-          "required": ["response"],
+          "required": [
+            "response"
+          ],
           "properties": {
             "responses": false,
             "sequence": false
           }
         },
         {
-          "required": ["responses"],
+          "required": [
+            "responses"
+          ],
           "properties": {
             "response": false
           }
@@ -65,7 +81,9 @@
     "request": {
       "description": "Matching criteria for an incoming HTTP request.",
       "type": "object",
-      "required": ["uri"],
+      "required": [
+        "uri"
+      ],
       "additionalProperties": false,
       "properties": {
         "method": {
@@ -105,7 +123,12 @@
         "body_match": {
           "description": "Body matching mode: exact (default), glob, contains, or regex.",
           "type": "string",
-          "enum": ["exact", "glob", "contains", "regex"],
+          "enum": [
+            "exact",
+            "glob",
+            "contains",
+            "regex"
+          ],
           "default": "exact"
         }
       }
@@ -151,7 +174,10 @@
         }
       },
       "not": {
-        "required": ["body", "body_file"]
+        "required": [
+          "body",
+          "body_file"
+        ]
       }
     }
   }

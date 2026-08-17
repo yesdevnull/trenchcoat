@@ -52,6 +52,11 @@ func unmarshalStrictYAML(data []byte, v any) error {
 }
 
 // unmarshalStrictJSON decodes JSON, rejecting unknown keys for the same reason.
+//
+// It also rejects anything after the document. json.Unmarshal required the
+// whole input to be a single value; json.Decoder.Decode reads one value and
+// stops, so without this check a second appended object -- or any trailing
+// garbage -- loads silently and the coats after it simply do not exist.
 func unmarshalStrictJSON(data []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -60,6 +65,10 @@ func unmarshalStrictJSON(data []byte, v any) error {
 			return nil
 		}
 		return err
+	}
+
+	if dec.More() {
+		return fmt.Errorf("unexpected content after the JSON document")
 	}
 	return nil
 }
@@ -77,6 +86,17 @@ func parseFileWith(path, format string, unmarshal func([]byte, any) error) (*Fil
 	if err := unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("parsing %s coat file %s: %w", format, path, err)
 	}
+
+	// Top-level keys outside the schema are accepted only as "x-" extensions.
+	// That exists for one idiom: a key whose only job is to hold a YAML anchor
+	// that coats below merge in. Everything else is a typo, and letting a typo
+	// through is what strict decoding is for.
+	for key := range f.Extensions {
+		if !strings.HasPrefix(key, "x-") {
+			return nil, fmt.Errorf("parsing %s coat file %s: unknown top-level field %q (only \"x-\" prefixed extension keys are allowed)", format, path, key)
+		}
+	}
+
 	return &f, nil
 }
 

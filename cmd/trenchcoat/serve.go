@@ -85,10 +85,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	for _, w := range loadResult.Warnings {
 		logger.Warn("coat validation warning", "warning", w)
 	}
+	// Load failures are logged at Error, not Warn. A file that fails to parse
+	// contributes none of its coats, so every route it defined now 404s with
+	// nothing in the response pointing at the cause -- a warning buried above a
+	// cheerful "coats loaded" line is not enough to find that from the outside.
 	for _, e := range loadResult.Errors {
-		logger.Warn("coat loading error", "error", e)
+		logger.Error("coat loading error", "error", e)
 	}
-	logger.Info("coats loaded", "count", len(loaded))
+	if len(loadResult.Errors) > 0 {
+		logger.Info("coats loaded", "count", len(loaded), "errors", len(loadResult.Errors))
+	} else {
+		logger.Info("coats loaded", "count", len(loaded))
+	}
 
 	srv := server.New(loaded, server.Config{
 		Verbose: verbose,

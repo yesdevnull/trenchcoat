@@ -74,9 +74,10 @@ type Proxy struct {
 
 	nameTmpl *template.Template // parsed name template (nil = default naming)
 
-	mu       sync.Mutex
-	counters map[string]int // for append dedup mode
-	inflight map[string]int // base names currently being written, by capture count
+	mu        sync.Mutex
+	counters  map[string]int         // for append dedup mode
+	inflight  map[string]int         // base names currently being written, by capture count
+	baseLocks map[string]*sync.Mutex // serialises writes that resolve to the same base name
 
 	captures sync.WaitGroup
 
@@ -153,6 +154,14 @@ func New(cfg Config) (*Proxy, error) {
 		transport.TLSClientConfig.ServerName = cfg.TLSServerName
 	}
 
+	// Validate the filter here rather than on every request. shouldCapture
+	// treats an uncompilable pattern as "no match", so a typo would otherwise
+	// capture nothing at all while logging one error per request and reporting
+	// "captured=false", which is indistinguishable from a deliberate miss.
+	if cfg.Filter != "" && !doublestar.ValidatePattern(cfg.Filter) {
+		return nil, fmt.Errorf("invalid --filter glob %q", cfg.Filter)
+	}
+
 	var nameTmpl *template.Template
 	if cfg.NameTemplate != "" {
 		var err error
@@ -175,6 +184,7 @@ func New(cfg Config) (*Proxy, error) {
 		},
 		counters:   make(map[string]int),
 		inflight:   make(map[string]int),
+		baseLocks:  make(map[string]*sync.Mutex),
 		captureSem: make(chan struct{}, 20),
 	}
 
@@ -243,6 +253,12 @@ func (p *Proxy) WaitCaptures() {
 // waiting: there is no safe way to wait for captures that something may still
 // be adding to.
 func (p *Proxy) Shutdown(timeout time.Duration) error {
+	// Start failed, or was never called: there is nothing to drain, and
+	// dereferencing httpServer would panic in a deferred Shutdown.
+	if p.httpServer == nil {
+		return nil
+	}
+
 	// Split timeout: half for HTTP drain, half for capture drain.
 	httpDrain := timeout / 2
 	captureDrain := timeout - httpDrain
@@ -357,11 +373,20 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// client has its response it may immediately call WaitCaptures or Shutdown,
 	// and a capture that has not yet joined the WaitGroup is invisible to both.
 	if shouldCapture {
+		// Drop the headers the client scoped to this hop before the capture ever
+		// sees them. They were withheld from the upstream, so recording them
+		// would make a coat demand, at replay, a header that had no part in
+		// producing the response being recorded.
+		capHeader := r.Header.Clone()
+		for name := range reqConnectionScoped {
+			capHeader.Del(name)
+		}
+
 		capReq := captureRequest{
 			Method:   r.Method,
 			URI:      r.URL.Path,
 			RawQuery: r.URL.RawQuery,
-			Header:   r.Header.Clone(),
+			Header:   capHeader,
 			Body:     reqBody,
 		}
 		p.captures.Go(func() {
@@ -442,9 +467,18 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 			reqHeaders[k] = req.Header.Get(k)
 		}
 
+		// The relay withholds hop-by-hop and Connection-scoped headers from the
+		// client, so the capture must withhold them too: a coat recording them
+		// asserts a response that never went over the wire, and a captured
+		// Connection: close makes the mock drop keep-alive for every client
+		// replaying it.
+		respScoped := connectionScopedHeaders(resp.Header)
 		respHeaders = make(map[string]string)
 		for k := range resp.Header {
-			if p.isStrippedHeader(k) || isContentLengthHeader(k) || (decompressed && isContentEncodingHeader(k)) {
+			if p.isStrippedHeader(k) || isHopByHopHeader(k) || respScoped[strings.ToLower(k)] {
+				continue
+			}
+			if isContentLengthHeader(k) || (decompressed && isContentEncodingHeader(k)) {
 				continue
 			}
 			respHeaders[k] = resp.Header.Get(k)
@@ -505,14 +539,14 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 	}
 	defer p.releaseFilename(base)
 
-	// Write body to a separate file if threshold is exceeded.
+	// Decide the body file before marshalling, but do not put it on disk until
+	// the coat itself has been written: a body file left behind by a capture
+	// whose coat failed to write would be picked up by the next capture of the
+	// same request, pairing one interaction's coat with another's body.
+	var bodyFileName, bodyFileContent string
 	if p.config.BodyFileThreshold > 0 && len(responseBody) > p.config.BodyFileThreshold {
-		bodyFileName := strings.TrimSuffix(filename, ".yaml") + "_body.txt"
-		bodyFilePath := filepath.Join(p.config.WriteDir, bodyFileName)
-		if err := os.WriteFile(bodyFilePath, []byte(responseBody), 0600); err != nil {
-			p.logger.Error("failed to write body file", "path", bodyFilePath, "error", err)
-			return
-		}
+		bodyFileName = strings.TrimSuffix(filename, ".yaml") + "_body.txt"
+		bodyFileContent = responseBody
 		coatDef.Coats[0].Response.Body = ""
 		coatDef.Coats[0].Response.BodyFile = bodyFileName
 	}
@@ -523,12 +557,55 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 		return
 	}
 
+	// Serialise against any other capture writing this same name.
+	baseMu := p.lockBase(base)
+	baseMu.Lock()
+	defer baseMu.Unlock()
+
 	fullPath := filepath.Join(p.config.WriteDir, filename)
 	if err := os.WriteFile(fullPath, data, 0600); err != nil {
 		p.logger.Error("failed to write coat file", "path", fullPath, "error", err)
-	} else if p.config.Verbose {
+		return
+	}
+
+	if bodyFileName != "" {
+		bodyFilePath := filepath.Join(p.config.WriteDir, bodyFileName)
+		if err := os.WriteFile(bodyFilePath, []byte(bodyFileContent), 0600); err != nil {
+			p.logger.Error("failed to write body file, removing the coat that references it",
+				"path", bodyFilePath, "coat", fullPath, "error", err)
+			if rmErr := os.Remove(fullPath); rmErr != nil {
+				p.logger.Error("failed to remove the orphaned coat file", "path", fullPath, "error", rmErr)
+			}
+			return
+		}
+	}
+
+	if p.config.Verbose {
 		p.logger.Info("captured coat file", "path", fullPath)
 	}
+}
+
+// lockBase returns the mutex serialising writes for a capture base name,
+// creating it on first use.
+//
+// Two captures can resolve to the same filename -- the default dedupe mode
+// gives every capture of a request the same stable name, and the base
+// deliberately excludes the query string, so requests differing only by query
+// collide. os.WriteFile is open(O_TRUNC) then write with nothing pairing the
+// two, so concurrent writers can interleave as A-open, B-open (truncating),
+// A-write, B-write and leave B's bytes over the head of A's: an unparseable
+// coat file on disk. Serialising by base means the last writer wins whole,
+// while captures of different requests still run concurrently up to captureSem.
+func (p *Proxy) lockBase(base string) *sync.Mutex {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	mu, ok := p.baseLocks[base]
+	if !ok {
+		mu = &sync.Mutex{}
+		p.baseLocks[base] = mu
+	}
+	return mu
 }
 
 // captureRequest holds request data copied from *http.Request before the
@@ -621,8 +698,18 @@ func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) (stri
 	switch p.config.Dedupe {
 	case "skip":
 		// Check if a file with this base already exists (any naming scheme).
-		matches, _ := filepath.Glob(filepath.Join(p.config.WriteDir, base+"*.yaml"))
-		if len(matches) > 0 {
+		// The pattern is matched against the directory listing rather than
+		// interpolated into a glob: --write-dir is user-supplied, and a path
+		// containing '[' either changes the pattern's meaning or fails to
+		// compile, both of which silently answer "nothing here" and turn skip
+		// into overwrite.
+		exists, err := p.captureExists(base)
+		if err != nil {
+			p.logger.Error("dedupe=skip could not check for an existing capture; skipping this capture rather than risk a duplicate",
+				"write_dir", p.config.WriteDir, "base", base, "error", err)
+			return "", ""
+		}
+		if exists {
 			return "", "" // Signal to skip.
 		}
 		// A capture already writing this base has not appeared on disk yet, but
@@ -631,7 +718,12 @@ func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) (stri
 		if p.inflight[base] > 0 {
 			return "", ""
 		}
-		return fmt.Sprintf("%s_%d.yaml", base, ts), base
+		// No timestamp: skip guarantees one file per request, so a timestamp
+		// only made the name unpredictable. It also meant two concurrent
+		// captures that got past the check together landed on different paths
+		// whenever they straddled a second boundary, writing the two files skip
+		// exists to prevent.
+		return fmt.Sprintf("%s.yaml", base), base
 
 	case "append":
 		counter := p.counters[base]
@@ -644,6 +736,32 @@ func (p *Proxy) generateFilenameLocked(method, urlPath string, status int) (stri
 	default: // overwrite
 		return fmt.Sprintf("%s.yaml", base), base
 	}
+}
+
+// captureExists reports whether a capture for this base name is already on
+// disk, under any of the naming schemes.
+//
+// It lists the directory and compares prefixes rather than building a glob out
+// of p.config.WriteDir. A --write-dir containing a glob metacharacter would
+// otherwise either silently change the pattern's meaning ("/tmp/run[1]" makes
+// "[1]" a character class) or fail to compile, and both look identical to "no
+// existing capture" -- turning dedupe=skip into overwrite with nothing logged.
+func (p *Proxy) captureExists(base string) (bool, error) {
+	entries, err := os.ReadDir(p.config.WriteDir)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", p.config.WriteDir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, base) && strings.HasSuffix(name, ".yaml") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (p *Proxy) captureBodyEnabled() bool {
@@ -695,9 +813,9 @@ func connectionScopedHeaders(h http.Header) map[string]bool {
 // Every header a coat records becomes a match constraint the replayed request
 // must satisfy. Recording these ties the coat to the tool that captured it: a
 // coat taken with curl carries User-Agent: curl/8.7.1 and Accept: */*, and any
-// other client replaying the identical request gets a 404. Content-Length and
-// Host describe the message and its destination, not its identity, and
-// Accept-Encoding is added by the transport rather than the caller.
+// other client replaying the identical request gets a 404. Content-Length
+// describes the message rather than its identity, and Accept-Encoding is added
+// by the transport rather than the caller.
 //
 // Headers that genuinely qualify a request -- Content-Type, and custom headers
 // such as X-Api-Key -- are still captured.
@@ -706,13 +824,20 @@ var clientSpecificRequestHeaders = map[string]struct{}{
 	"accept-encoding": {},
 	"accept-language": {},
 	"content-length":  {},
-	"host":            {},
 	"user-agent":      {},
 }
 
 // isUncapturedRequestHeader reports whether a request header should be left out
-// of a captured coat, covering both connection-scoped headers and the
+// of a captured coat, covering the static hop-by-hop set and the
 // client-specific set above.
+//
+// Headers the client scoped to this hop by naming them in its Connection header
+// are handled separately, in handleRequest: they vary per message, so they are
+// removed from the cloned header before the capture is built rather than
+// decided here.
+//
+// Host is not listed: net/http moves it to Request.Host and deletes it from
+// Request.Header, so it never reaches a capture in the first place.
 func isUncapturedRequestHeader(h string) bool {
 	if isHopByHopHeader(h) {
 		return true

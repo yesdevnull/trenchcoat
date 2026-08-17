@@ -571,3 +571,85 @@ func TestParseFile_KnownFieldsStillParse(t *testing.T) {
 		t.Fatalf("expected the file to validate, got: %v", errs)
 	}
 }
+
+func TestParseFile_RejectsTrailingContent(t *testing.T) {
+	// json.Decoder reads one value and stops, unlike json.Unmarshal which
+	// required the whole input to be a single document. Without an explicit
+	// check, a second appended object or trailing garbage loads silently and
+	// half the file's coats simply do not exist.
+	dir := t.TempDir()
+
+	for name, body := range map[string]string{
+		"second-document.json":  `{"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]}{"coats":[]}`,
+		"trailing-garbage.json": `{"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]} garbage`,
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := coat.ParseFile(path); err == nil {
+			t.Errorf("%s: expected an error for content after the JSON document", name)
+		}
+	}
+}
+
+func TestParseFile_EmptyFileIsNotAnError(t *testing.T) {
+	// An empty or comment-only file yields a File with no coats, which is what
+	// yaml.Unmarshal and json.Unmarshal did before strict decoding. Nothing
+	// covered this, so deleting the io.EOF guard left the whole suite green.
+	dir := t.TempDir()
+
+	cases := map[string]string{
+		"empty.yaml":   "",
+		"comment.yaml": "# nothing here yet\n",
+		"empty.json":   "",
+	}
+	for name, body := range cases {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := coat.ParseFile(path)
+		if err != nil {
+			t.Errorf("%s: expected no error, got %v", name, err)
+			continue
+		}
+		if len(f.Coats) != 0 {
+			t.Errorf("%s: expected zero coats, got %d", name, len(f.Coats))
+		}
+	}
+}
+
+func TestParseFile_AllowsTopLevelExtensionKeys(t *testing.T) {
+	// Strict decoding must not break the anchor-holder idiom: a top-level x-
+	// key exists purely to carry a YAML anchor that coats then merge in. Merge
+	// keys always worked; it was the key holding the anchor that stopped
+	// parsing. Any other unknown key is still an error.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "anchors.yaml")
+	body := `x-defaults: &defaults
+  code: 200
+  headers:
+    Content-Type: application/json
+coats:
+  - name: uses-anchor
+    request:
+      uri: /api/users
+    response:
+      <<: *defaults
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := coat.ParseFile(path)
+	if err != nil {
+		t.Fatalf("a top-level x- key holding an anchor must parse, got: %v", err)
+	}
+	if len(f.Coats) != 1 {
+		t.Fatalf("expected 1 coat, got %d", len(f.Coats))
+	}
+	if got := f.Coats[0].Response.Code; got != 200 {
+		t.Fatalf("merged anchor should set code 200, got %d", got)
+	}
+}
