@@ -4,6 +4,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,6 +106,15 @@ func (s *Server) Start(addr string) (string, error) {
 
 // StartTLS begins listening with TLS on the configured address.
 func (s *Server) StartTLS(addr, certFile, keyFile string) (string, error) {
+	// Load the key pair before opening the listener. ServeTLS loads it from the
+	// serving goroutine, after startListener has already reported success and
+	// without closing the listener it was handed, which leaves a bound port that
+	// never accepts: the CLI logs "server started (TLS)", then an error nobody
+	// is watching for, and every client hangs until it times out.
+	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+		return "", fmt.Errorf("invalid TLS cert/key pair (%s, %s): %w", certFile, keyFile, err)
+	}
+
 	return s.startListener(addr, true, func(ln net.Listener) error {
 		return s.httpServer.ServeTLS(ln, certFile, keyFile)
 	})
