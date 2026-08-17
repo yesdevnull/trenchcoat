@@ -436,6 +436,10 @@ func (p *Proxy) shouldCapture(urlPath string) bool {
 	}
 	matched, err := doublestar.Match(p.config.Filter, urlPath)
 	if err != nil {
+		// Unreachable in practice: New rejects a pattern ValidatePattern turns
+		// down, so Match should never report a bad one. Kept as a backstop
+		// because the alternative is discarding the error, which would make the
+		// two APIs disagreeing look like an ordinary filter miss.
 		p.logger.Error("invalid capture filter pattern", "filter", p.config.Filter, "error", err)
 		return false
 	}

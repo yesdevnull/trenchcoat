@@ -485,3 +485,104 @@ coats:
 		t.Fatal("expected validation errors for coat without URI")
 	}
 }
+
+func TestServer_ResetCallsAndStringPtrBodyMatching(t *testing.T) {
+	// The assertion helpers are the advertised reason to use this package from a
+	// Go test, and ResetCalls in particular is what makes a server reusable
+	// across subtests. StringPtr exists because Request.Body is a *string, so an
+	// empty body constraint can be told apart from no constraint at all -- this
+	// exercises both together, since a body-constrained coat is where StringPtr
+	// is actually needed.
+	srv := NewServer(
+		WithCoat(Coat{
+			Name: "create-user",
+			Request: Request{
+				Method: "POST",
+				URI:    "/api/users",
+				Body:   StringPtr(`{"name":"alice"}`),
+			},
+			Response: &Response{Code: 201, Body: `{"id":1}`},
+		}),
+	)
+	srv.Start(t)
+
+	post := func(body string) int {
+		t.Helper()
+		resp, err := http.Post(srv.URL+"/api/users", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+
+	// The body constraint must actually constrain: a different body is no match.
+	if got := post(`{"name":"bob"}`); got != http.StatusNotFound {
+		t.Fatalf("expected 404 for a body the coat does not constrain to, got %d", got)
+	}
+	srv.AssertNotCalled(t, "create-user")
+
+	if got := post(`{"name":"alice"}`); got != http.StatusCreated {
+		t.Fatalf("expected 201 for the constrained body, got %d", got)
+	}
+	if got := post(`{"name":"alice"}`); got != http.StatusCreated {
+		t.Fatalf("expected 201 on the second call, got %d", got)
+	}
+	srv.AssertCalledN(t, "create-user", 2)
+
+	if reqs := srv.Requests("create-user"); len(reqs) != 2 {
+		t.Fatalf("expected 2 recorded requests, got %d", len(reqs))
+	} else if reqs[0].Body != `{"name":"alice"}` {
+		t.Fatalf("recorded request body should be the matched body, got %q", reqs[0].Body)
+	}
+
+	// ResetCalls must clear the record without disturbing the coats, so the same
+	// server can be reused by the next subtest.
+	srv.ResetCalls()
+	srv.AssertNotCalled(t, "create-user")
+	if reqs := srv.Requests("create-user"); len(reqs) != 0 {
+		t.Fatalf("expected no recorded requests after ResetCalls, got %d", len(reqs))
+	}
+
+	if got := post(`{"name":"alice"}`); got != http.StatusCreated {
+		t.Fatalf("server should still serve after ResetCalls, got %d", got)
+	}
+	srv.AssertCalledN(t, "create-user", 1)
+}
+
+func TestServer_StringPtrDistinguishesEmptyBodyFromNoConstraint(t *testing.T) {
+	// The whole reason Request.Body is a pointer: an empty string is a real
+	// constraint ("this request must have no body"), which a plain string could
+	// not express.
+	srv := NewServer(
+		WithCoat(Coat{
+			Name: "empty-body-only",
+			Request: Request{
+				Method: "POST",
+				URI:    "/ping",
+				Body:   StringPtr(""),
+			},
+			Response: &Response{Code: 204},
+		}),
+	)
+	srv.Start(t)
+
+	resp, err := http.Post(srv.URL+"/ping", "text/plain", strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for an empty body, got %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Post(srv.URL+"/ping", "text/plain", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("a coat constrained to an empty body must not match a request with one, got %d", resp2.StatusCode)
+	}
+}

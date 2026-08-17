@@ -1536,3 +1536,122 @@ func TestMatch_GlobPrecedence_BracketIsNotLiteralPrefix(t *testing.T) {
 	}
 	assertEqual(t, "name", "longer-literal-prefix", result.Name)
 }
+
+func TestMatchVerbose_NearMissDiagnostics(t *testing.T) {
+	// The near-miss reason is what a user reads when a request they expected to
+	// match returns 404, so a wrong or vague one costs real debugging time. Each
+	// case names a distinct reason; only the missing-header branch was covered.
+	body := "hello"
+
+	tests := []struct {
+		name    string
+		coat    coat.Coat
+		request *http.Request
+		want    string
+	}{
+		{
+			name: "header absent from the request",
+			coat: coat.Coat{
+				Name: "needs-auth",
+				Request: coat.Request{
+					Method:  "GET",
+					URI:     "/test",
+					Headers: map[string]string{"Authorization": "Bearer *"},
+				},
+				Response: &coat.Response{Code: 200},
+			},
+			request: newRequest(t, "GET", "/test", nil),
+			want:    "missing header Authorization",
+		},
+		{
+			name: "header present but the value does not match",
+			coat: coat.Coat{
+				Name: "needs-bearer",
+				Request: coat.Request{
+					Method:  "GET",
+					URI:     "/test",
+					Headers: map[string]string{"Authorization": "Bearer *"},
+				},
+				Response: &coat.Response{Code: 200},
+			},
+			request: newRequest(t, "GET", "/test", map[string]string{"Authorization": "Basic abc"}),
+			want:    `Authorization value did not match pattern "Bearer *"`,
+		},
+		{
+			name: "query parameter absent",
+			coat: coat.Coat{
+				Name: "needs-page",
+				Request: coat.Request{
+					Method: "GET",
+					URI:    "/search",
+					Query:  &coat.QueryField{Map: map[string]string{"page": "1"}},
+				},
+				Response: &coat.Response{Code: 200},
+			},
+			request: newRequest(t, "GET", "/search", nil),
+			want:    "missing parameter page",
+		},
+		{
+			name: "query parameter present but the value does not match",
+			coat: coat.Coat{
+				Name: "needs-page-one",
+				Request: coat.Request{
+					Method: "GET",
+					URI:    "/search",
+					Query:  &coat.QueryField{Map: map[string]string{"page": "1"}},
+				},
+				Response: &coat.Response{Code: 200},
+			},
+			request: newRequest(t, "GET", "/search?page=2", nil),
+			want:    "page",
+		},
+		{
+			name: "raw query string does not match",
+			coat: coat.Coat{
+				Name: "needs-raw-query",
+				Request: coat.Request{
+					Method: "GET",
+					URI:    "/search",
+					Query:  &coat.QueryField{Raw: "page=1&limit=10"},
+				},
+				Response: &coat.Response{Code: 200},
+			},
+			request: newRequest(t, "GET", "/search?page=2", nil),
+			want:    "expected raw query",
+		},
+		{
+			name: "body does not match",
+			coat: coat.Coat{
+				Name: "needs-body",
+				Request: coat.Request{
+					Method: "POST",
+					URI:    "/submit",
+					Body:   &body,
+				},
+				Response: &coat.Response{Code: 200},
+			},
+			request: newRequestWithBody(t, "POST", "/submit", nil, "goodbye"),
+			want:    "body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := matcher.New([]coat.Coat{tt.coat})
+
+			result, mismatches := m.MatchVerbose(tt.request)
+			if result != nil {
+				t.Fatalf("expected no match, got coat %q", result.Name)
+			}
+			if len(mismatches) == 0 {
+				t.Fatal("expected a near miss to be reported")
+			}
+			if mismatches[0].CoatName != tt.coat.Name {
+				t.Fatalf("near miss named coat %q, want %q", mismatches[0].CoatName, tt.coat.Name)
+			}
+			if !strings.Contains(mismatches[0].Reason, tt.want) {
+				t.Fatalf("near-miss reason %q does not mention %q", mismatches[0].Reason, tt.want)
+			}
+		})
+	}
+}

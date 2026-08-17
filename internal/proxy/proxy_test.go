@@ -1909,3 +1909,169 @@ func TestProxy_CaptureOmitsConnectionScopedHeaders(t *testing.T) {
 		t.Errorf("Content-Type must still be captured, got %q", got)
 	}
 }
+
+func TestProxy_DedupeSkip_WriteDirContainingGlobMetacharacters(t *testing.T) {
+	// The existence check used to interpolate --write-dir into a glob pattern.
+	// A directory named "run[1]" made "[1]" a character class, so the check
+	// searched "run1", found nothing, and skip silently behaved as overwrite --
+	// writing a file per request instead of the one it promises.
+	// The response differs per request, so the file's contents say whether the
+	// later captures were skipped or wrote over the first. Counting files cannot
+	// tell: skip filenames are stable, so a skip that degrades to overwrite
+	// still leaves exactly one file behind.
+	var mu sync.Mutex
+	n := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		body := fmt.Sprintf("response-%d", n)
+		mu.Unlock()
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	writeDir := filepath.Join(t.TempDir(), "run[1]")
+	if err := os.MkdirAll(writeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "skip",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	for range 3 {
+		resp, err := httpClient.Get(p.URL() + "/api/items")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		p.WaitCaptures()
+	}
+
+	content, err := os.ReadFile(filepath.Join(writeDir, "GET_api_items_200.yaml"))
+	if err != nil {
+		t.Fatalf("expected a captured coat: %v", err)
+	}
+	if !strings.Contains(string(content), "response-1") {
+		t.Fatalf("dedupe=skip kept the last capture rather than the first, so the existence check never saw the file it had already written:\n%s", content)
+	}
+}
+
+func TestProxy_DedupeSkip_FilenameIsStable(t *testing.T) {
+	// skip guarantees one file per request, so the name carries no timestamp:
+	// a predictable name is what makes a captured fixture referenceable from a
+	// test or a script.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "skip",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/items")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	want := filepath.Join(writeDir, "GET_api_items_200.yaml")
+	if _, err := os.Stat(want); err != nil {
+		entries, _ := filepath.Glob(filepath.Join(writeDir, "*.yaml"))
+		t.Fatalf("expected the stable name %s, found %v", filepath.Base(want), entries)
+	}
+}
+
+func TestProxy_BodyFileFailureRemovesTheCoatReferencingIt(t *testing.T) {
+	// A coat naming a body file that is not there is worse than no coat: it
+	// serves a 500 at replay for a capture the user believes succeeded. If the
+	// body cannot be written, the coat pointing at it must not survive either.
+	//
+	// The body file is made unwritable by pre-creating it as a directory, which
+	// os.WriteFile cannot overwrite.
+	body := strings.Repeat("x", 8192)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(writeDir, "GET_api_items_200_body.txt"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:       upstream.URL,
+		WriteDir:          writeDir,
+		StripHeaders:      []string{},
+		Dedupe:            "overwrite",
+		BodyFileThreshold: 1024,
+		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	resp, err := httpClient.Get(p.URL() + "/api/items")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	p.WaitCaptures()
+
+	coatPath := filepath.Join(writeDir, "GET_api_items_200.yaml")
+	if _, err := os.Stat(coatPath); err == nil {
+		content, _ := os.ReadFile(coatPath)
+		t.Fatalf("the coat survived a failed body-file write, so replaying it would 500:\n%s", content)
+	}
+}
+
+func TestProxy_ShutdownBeforeStartIsNotAnError(t *testing.T) {
+	// Start assigns httpServer, so a deferred Shutdown after a failed or absent
+	// Start would otherwise dereference nil -- turning a reportable error into a
+	// panic in the caller's cleanup.
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL: "http://127.0.0.1:1",
+		WriteDir:    t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	if err := p.Shutdown(time.Second); err != nil {
+		t.Fatalf("Shutdown before Start should be a no-op, got %v", err)
+	}
+}
