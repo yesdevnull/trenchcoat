@@ -392,9 +392,10 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 
 		respHeaders = make(map[string]string)
 		for k := range resp.Header {
-			if !p.isStrippedHeader(k) && (!decompressed || !isEncodingHeader(k)) {
-				respHeaders[k] = resp.Header.Get(k)
+			if p.isStrippedHeader(k) || isContentLengthHeader(k) || (decompressed && isContentEncodingHeader(k)) {
+				continue
 			}
+			respHeaders[k] = resp.Header.Get(k)
 		}
 	}
 
@@ -565,11 +566,20 @@ func isHopByHopHeader(h string) bool {
 	return ok
 }
 
-// isEncodingHeader returns true for headers that should be stripped from
-// captured coat files when the body has been decompressed for readability.
-func isEncodingHeader(h string) bool {
-	lower := strings.ToLower(h)
-	return lower == "content-encoding" || lower == "content-length"
+// isContentLengthHeader returns true for the Content-Length header, which is
+// never recorded in a captured coat. The captured body is what the mock server
+// replays, and it differs from the upstream body whenever it is pretty-printed
+// or decompressed; net/http derives the correct length when serving, so a
+// recorded length can only ever be wrong.
+func isContentLengthHeader(h string) bool {
+	return strings.EqualFold(h, "content-length")
+}
+
+// isContentEncodingHeader returns true for the Content-Encoding header, which
+// is stripped from captured coat files when the body has been decompressed for
+// readability -- the recorded body is no longer in that encoding.
+func isContentEncodingHeader(h string) bool {
+	return strings.EqualFold(h, "content-encoding")
 }
 
 // SanitisePath converts a URL path to a filename-safe string.
