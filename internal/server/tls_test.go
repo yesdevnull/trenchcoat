@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +114,71 @@ func TestServe_TLS_CorruptKeyFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected TLS handshake error with corrupt key, but request succeeded")
 	}
+}
+
+func TestStartTLS_InvalidCertPair_ReturnsError(t *testing.T) {
+	// ServeTLS loads the key pair after the listener exists and returns without
+	// closing it, so reporting success here leaves a bound port that never
+	// accepts: `trenchcoat serve --tls-cert bad.pem` logs "server started
+	// (TLS)", then an error from a goroutine, and hangs every client until
+	// timeout while exiting 0 on SIGINT. The caller must be told at start time.
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "bad-cert.pem")
+	keyFile := filepath.Join(dir, "bad-key.pem")
+	if err := os.WriteFile(certFile, []byte("not a certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, []byte("not a key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := server.New(nil, server.Config{})
+	addr, err := srv.StartTLS("127.0.0.1:0", certFile, keyFile)
+	if err == nil {
+		t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+		t.Fatalf("StartTLS reported success on an invalid cert/key pair, listening at %s", addr)
+	}
+	if !strings.Contains(err.Error(), "TLS") && !strings.Contains(err.Error(), "tls") {
+		t.Fatalf("error should name the TLS cert/key pair as the cause, got: %v", err)
+	}
+}
+
+func TestStartTLS_InvalidCertPair_DoesNotLeaveAPortBound(t *testing.T) {
+	// The failed listener must be closed, not leaked: a bound port that never
+	// accepts is worse than a clean failure, and on a fixed --port it also
+	// blocks the retry after fixing the certificate.
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "bad-cert.pem")
+	keyFile := filepath.Join(dir, "bad-key.pem")
+	if err := os.WriteFile(certFile, []byte("not a certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, []byte("not a key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Claim a port, note it, release it, then make the server fail on it.
+	probe, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.Addr().String()
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := server.New(nil, server.Config{})
+	if _, err := srv.StartTLS(addr, certFile, keyFile); err == nil {
+		t.Cleanup(func() { _ = srv.Shutdown(5 * time.Second) })
+		t.Fatal("StartTLS reported success on an invalid cert/key pair")
+	}
+
+	// The port must be free again.
+	again, err := net.Listen("tcp4", addr)
+	if err != nil {
+		t.Fatalf("port %s still bound after StartTLS failed: %v", addr, err)
+	}
+	_ = again.Close()
 }
 
 func TestServe_TLS_MismatchedCertAndKey(t *testing.T) {
