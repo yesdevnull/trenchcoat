@@ -249,6 +249,32 @@ func TestMatch_RegexURI(t *testing.T) {
 	}
 }
 
+func TestMatch_RegexURIAlternationIsAnchored(t *testing.T) {
+	// Anchoring by concatenation gives "^/users|/accounts$", which regexp reads
+	// as "(^/users)|(/accounts$)" -- so each alternative keeps only one anchor
+	// and the coat fires on paths it was never meant to cover.
+	coats := []coat.Coat{
+		{
+			Name:     "regex-alternation",
+			Request:  coat.Request{Method: "GET", URI: `~/users|/accounts`},
+			Response: &coat.Response{Code: 200},
+		},
+	}
+	m := matcher.New(coats)
+
+	for _, uri := range []string{"/users", "/accounts"} {
+		if m.Match(newRequest(t, "GET", uri, nil)) == nil {
+			t.Fatalf("expected %q to match", uri)
+		}
+	}
+
+	for _, uri := range []string{"/users/secret/1", "/x/y/accounts"} {
+		if result := m.Match(newRequest(t, "GET", uri, nil)); result != nil {
+			t.Fatalf("expected no match for %q, but coat %q fired", uri, result.Name)
+		}
+	}
+}
+
 // --- Header matching ---
 
 func TestMatch_HeaderSubset(t *testing.T) {

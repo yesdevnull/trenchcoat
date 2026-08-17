@@ -85,7 +85,7 @@ func New(coats []coat.Coat) *Matcher {
 		if strings.HasPrefix(c.Request.URI, "~/") {
 			e.uriType = uriRegex
 			pattern := strings.TrimPrefix(c.Request.URI, "~")
-			re, err := regexp.Compile("^" + pattern + "$")
+			re, err := regexp.Compile(coat.AnchorRegexURI(pattern))
 			if err == nil {
 				e.regex = re
 			}

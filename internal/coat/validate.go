@@ -12,6 +12,17 @@ import (
 // MaxDelayMs is the maximum allowed value for delay_ms (60 seconds).
 const MaxDelayMs = 60000
 
+// AnchorRegexURI wraps a regex URI pattern so it must match the whole path.
+//
+// The group is not optional. Concatenating "^" and "$" onto a pattern with a
+// top-level alternation yields "^/users|/accounts$", which regexp reads as
+// "(^/users)|(/accounts$)": each alternative keeps one anchor and the coat
+// matches paths it never claimed. The matcher and the validator must both use
+// this, or validate accepts patterns the matcher rejects and vice versa.
+func AnchorRegexURI(pattern string) string {
+	return "^(?:" + pattern + ")$"
+}
+
 // GlobMetacharacters are the characters whose presence makes a request URI a
 // glob rather than an exact path. The matcher's classifier and this package's
 // validation must agree on this set: if validation used a narrower set it would
@@ -97,7 +108,7 @@ func validateCoat(index int, c Coat) []*ValidationError {
 	// Validate regex URI syntax.
 	if strings.HasPrefix(c.Request.URI, "~/") {
 		pattern := strings.TrimPrefix(c.Request.URI, "~")
-		if _, err := regexp.Compile("^" + pattern + "$"); err != nil {
+		if _, err := regexp.Compile(AnchorRegexURI(pattern)); err != nil {
 			errs = append(errs, mkErr(fmt.Sprintf("request.uri has invalid regex %q: %v", c.Request.URI, err)))
 		}
 	} else if strings.ContainsAny(c.Request.URI, GlobMetacharacters) {
