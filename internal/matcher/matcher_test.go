@@ -1082,22 +1082,26 @@ func TestMatchBodyIOError(t *testing.T) {
 func TestMatch_BodyExceedsMaxSize_NoMatch(t *testing.T) {
 	const maxBodyMatchSize = 1 << 20 // 1 MiB — mirrors the constant in matcher.go
 
+	// The coat constrains the body to exactly the bytes the request will send,
+	// so content is identical and the size cap is the only thing that can
+	// prevent a match. Constraining it to a different string instead would make
+	// this test pass on the content mismatch alone, proving nothing about the
+	// cap — it would stay green with the oversized-body branch deleted.
+	oversized := strings.Repeat("x", maxBodyMatchSize+1)
+
 	coats := []coat.Coat{
 		{
 			Name: "body-match",
 			Request: coat.Request{
 				Method: "POST",
 				URI:    "/upload",
-				Body:   coat.StringPtr("test"),
+				Body:   coat.StringPtr(oversized),
 			},
 			Response: &coat.Response{Code: 200},
 		},
 	}
 	m := matcher.New(coats)
 
-	// A body larger than maxBodyMatchSize should NOT match because the matcher
-	// treats oversized bodies as a read error for body-constrained coats.
-	oversized := strings.Repeat("x", maxBodyMatchSize+1)
 	req := newRequestWithBody(t, "POST", "/upload", nil, oversized)
 	result := m.Match(req)
 	if result != nil {

@@ -74,6 +74,90 @@ func TestValidate_BodyMatchWithoutBody(t *testing.T) {
 	}
 }
 
+// TestValidate_ResponseConstraints covers every error branch of
+// validateResponse. Two of these rules have no runtime backstop: the server
+// sizes its write timeout assuming delay_ms is capped, and it calls
+// rand.IntN(delay_jitter_ms), which panics on a negative value. Validation is
+// the only thing standing between a hand-edited coat file and that panic.
+func TestValidate_ResponseConstraints(t *testing.T) {
+	tests := []struct {
+		name     string
+		response Response
+		wantMsg  string
+	}{
+		{
+			name:     "absolute body_file",
+			response: Response{Code: 200, BodyFile: "/etc/passwd"},
+			wantMsg:  "'body_file' must not be an absolute path",
+		},
+		{
+			name:     "body_file escaping the coat directory",
+			response: Response{Code: 200, BodyFile: "../../escape.json"},
+			wantMsg:  "'body_file' must not contain '..' path components",
+		},
+		{
+			name:     "negative delay_ms",
+			response: Response{Code: 200, DelayMs: -1},
+			wantMsg:  "'delay_ms' must not be negative",
+		},
+		{
+			name:     "delay_ms above the cap",
+			response: Response{Code: 200, DelayMs: MaxDelayMs + 1},
+			wantMsg:  "'delay_ms' must not exceed 60000",
+		},
+		{
+			name:     "negative delay_jitter_ms",
+			response: Response{Code: 200, DelayJitterMs: -1},
+			wantMsg:  "'delay_jitter_ms' must not be negative",
+		},
+		{
+			name:     "delay_ms and delay_jitter_ms combined above the cap",
+			response: Response{Code: 200, DelayMs: 59000, DelayJitterMs: 2000},
+			wantMsg:  "combined 'delay_ms' and 'delay_jitter_ms' must not exceed 60000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+"/response", func(t *testing.T) {
+			resp := tt.response
+			f := &File{Coats: []Coat{{
+				Name:     "singular",
+				Request:  Request{URI: "/test"},
+				Response: &resp,
+			}}}
+			assertValidationError(t, Validate(f), "response: "+tt.wantMsg)
+		})
+
+		t.Run(tt.name+"/responses", func(t *testing.T) {
+			resp := tt.response
+			f := &File{Coats: []Coat{{
+				Name:      "plural",
+				Request:   Request{URI: "/test"},
+				Responses: []Response{{Code: 200}, resp},
+			}}}
+			assertValidationError(t, Validate(f), "responses[1]: "+tt.wantMsg)
+		})
+	}
+}
+
+// assertValidationError fails unless exactly the expected message is present,
+// so a test cannot pass on some unrelated error the coat also happens to have.
+func assertValidationError(t *testing.T, errs []*ValidationError, want string) {
+	t.Helper()
+
+	for _, e := range errs {
+		if e.Message == want {
+			return
+		}
+	}
+
+	got := make([]string, 0, len(errs))
+	for _, e := range errs {
+		got = append(got, e.Message)
+	}
+	t.Fatalf("expected validation error %q, got %v", want, got)
+}
+
 func TestValidate_BodyMatchInvalidValue(t *testing.T) {
 	body := "hello"
 	f := &File{
