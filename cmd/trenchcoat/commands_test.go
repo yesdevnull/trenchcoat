@@ -1419,3 +1419,138 @@ func signalAndWait(t *testing.T, cmd *exec.Cmd, stderr *bytes.Buffer, timeout ti
 		t.Fatal("timeout waiting for process to exit")
 	}
 }
+
+func TestBinary_ProxyThenServe_LocalUpstream(t *testing.T) {
+	// The same end-to-end round trip as TestBinary_ProxyThenServe -- real
+	// binary, real HTTP, real coat file on disk -- but against a local upstream
+	// so it cannot skip.
+	//
+	// Its sibling proxies to a third-party API and calls t.Skipf when that host
+	// is unreachable or returns a non-200. A silent skip means the most
+	// valuable path in the suite can vanish from CI without turning anything
+	// red, and it depends on someone else's uptime and rate limits. That test
+	// stays, because exercising a real API end to end is worth having; this one
+	// guarantees the capability is verified on every run regardless.
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+
+	const payload = `{"userId":1,"id":1,"title":"local","body":"upstream"}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/posts/1" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer upstream.Close()
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	binary := filepath.Join(t.TempDir(), "trenchcoat")
+	build := exec.Command("go", "build", "-o", binary, "./")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build binary: %v\n%s", err, out)
+	}
+
+	// Capture through the proxy.
+	writeDir := t.TempDir()
+	proxyPort := freePort(t)
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+
+	proxyCmd := exec.Command(binary, "proxy",
+		upstream.URL,
+		"--port", fmt.Sprintf("%d", proxyPort),
+		"--write-dir", writeDir,
+		"--dedupe", "overwrite",
+	)
+	var proxyStderr bytes.Buffer
+	proxyCmd.Stderr = &proxyStderr
+	if err := proxyCmd.Start(); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = proxyCmd.Process.Signal(os.Kill)
+		_ = proxyCmd.Wait()
+	})
+	waitForHTTP(t, proxyURL+"/posts/1")
+
+	resp, err := httpClient.Get(proxyURL + "/posts/1")
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	capturedBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read proxy response: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 through the proxy, got %d", resp.StatusCode)
+	}
+	if string(capturedBody) != payload {
+		t.Fatalf("proxy did not relay the upstream body verbatim.\nwant: %s\ngot:  %s", payload, capturedBody)
+	}
+
+	// Stopping the proxy flushes pending captures.
+	signalAndWait(t, proxyCmd, &proxyStderr, 10*time.Second)
+
+	// The captured coat must satisfy the tool's own validator.
+	validateCmd := exec.Command(binary, "validate", writeDir)
+	if out, err := validateCmd.CombinedOutput(); err != nil {
+		t.Fatalf("validate rejected the captured coat: %v\n%s", err, out)
+	}
+
+	coatFile := filepath.Join(writeDir, "GET_posts_1_200.yaml")
+	parsed, err := coat.ParseFile(coatFile)
+	if err != nil {
+		t.Fatalf("failed to parse the captured coat: %v", err)
+	}
+	if len(parsed.Coats) != 1 {
+		t.Fatalf("expected 1 coat, got %d", len(parsed.Coats))
+	}
+	if got := parsed.Coats[0].Request.URI; got != "/posts/1" {
+		t.Fatalf("captured URI is %q, want /posts/1", got)
+	}
+
+	// Replay it, from a different client than the one that captured it.
+	servePort := freePort(t)
+	serveURL := fmt.Sprintf("http://127.0.0.1:%d", servePort)
+	serveCmd := exec.Command(binary, "serve", "--coats", writeDir, "--port", fmt.Sprintf("%d", servePort))
+	var serveStderr bytes.Buffer
+	serveCmd.Stderr = &serveStderr
+	if err := serveCmd.Start(); err != nil {
+		t.Fatalf("failed to start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = serveCmd.Process.Signal(os.Kill)
+		_ = serveCmd.Wait()
+	})
+	waitForHTTP(t, serveURL+"/posts/1")
+
+	replayReq, err := http.NewRequest("GET", serveURL+"/posts/1", nil)
+	if err != nil {
+		t.Fatalf("failed to build replay request: %v", err)
+	}
+	replayReq.Header.Set("User-Agent", "some-other-tool/2.0")
+	serveResp, err := httpClient.Do(replayReq)
+	if err != nil {
+		t.Fatalf("serve request failed: %v", err)
+	}
+	serveBody, err := io.ReadAll(serveResp.Body)
+	_ = serveResp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read serve response: %v", err)
+	}
+	if serveResp.StatusCode != 200 {
+		t.Fatalf("replaying the captured coat from a different client got %d: %s", serveResp.StatusCode, serveBody)
+	}
+
+	want := strings.TrimRight(string(capturedBody), "\n")
+	got := strings.TrimRight(string(serveBody), "\n")
+	if got != want {
+		t.Fatalf("replayed body does not match the capture.\nwant: %s\ngot:  %s", want, got)
+	}
+}
