@@ -1,37 +1,25 @@
 # Trenchcoat Demo
 
-*2026-03-07T11:47:22Z by Showboat dev*
-<!-- showboat-id: fcf11ad7-4059-45a7-b630-af2ed6fd6448 -->
+*2026-08-17T23:58:05Z by Showboat dev*
+<!-- showboat-id: fadf2e47-9d3c-46d2-a228-ea3eb2a1a229 -->
 
 Trenchcoat is an extensible mock and proxy-to-mock HTTP server. This demo walks through its key features using the CLI.
 
 ## CLI Help
 
-Let's start by exploring the available commands.
+Let's start by exploring the available commands. The first few lines of `trenchcoat --help` list them; the rest of that output is the full manual, covering the coat file format, matching rules and every flag.
 
 ```bash
-trenchcoat --help
+trenchcoat --help | head -6
 ```
 
 ```output
-Trenchcoat is a CLI tool that serves mock HTTP responses based on configurable request/response definitions called coats.
+Trenchcoat — extensible mock HTTP server and proxy-to-mock capture tool.
 
-Usage:
-  trenchcoat [command]
-
-Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  help        Help about any command
-  proxy       Start in proxy capture mode
-  serve       Start the mock HTTP server
-  validate    Validate one or more coat files for schema correctness
-
-Flags:
-      --config string   Path to configuration file
-  -h, --help            help for trenchcoat
-  -v, --version         version for trenchcoat
-
-Use "trenchcoat [command] --help" for more information about a command.
+COMMANDS
+  trenchcoat serve       Start a mock server from coat files
+  trenchcoat proxy       Capture live traffic as coat files
+  trenchcoat validate    Check coat files for errors
 ```
 
 ```bash
@@ -168,8 +156,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-03-07T11:53:19.479Z level=INFO msg="coats loaded" count=2
-time=2026-03-07T11:53:19.480Z level=INFO msg="server started" address=0.0.0.0:9100
+time=2026-08-17T23:58:05.767Z level=INFO msg="coats loaded" count=2
+time=2026-08-17T23:58:05.768Z level=INFO msg="server started" address=0.0.0.0:9100
 === GET /api/v1/users ===
 {
   "users": [
@@ -196,8 +184,8 @@ time=2026-03-07T11:53:19.480Z level=INFO msg="server started" address=0.0.0.0:91
   "method": "GET",
   "uri": "/unknown"
 }
-time=2026-03-07T11:53:20.586Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-03-07T11:53:20.586Z level=INFO msg="server stopped"
+time=2026-08-17T23:58:06.799Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-17T23:58:06.799Z level=INFO msg="server stopped"
 ```
 
 ## Glob and Regex URI Matching
@@ -256,8 +244,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-03-07T11:53:39.168Z level=INFO msg="coats loaded" count=3
-time=2026-03-07T11:53:39.169Z level=INFO msg="server started" address=0.0.0.0:9101
+time=2026-08-17T23:58:06.831Z level=INFO msg="coats loaded" count=3
+time=2026-08-17T23:58:06.831Z level=INFO msg="server started" address=0.0.0.0:9101
 === Glob: /api/v1/users/42 ===
 {
   "match": "glob-single-segment"
@@ -279,8 +267,8 @@ time=2026-03-07T11:53:39.169Z level=INFO msg="server started" address=0.0.0.0:91
   "method": "GET",
   "uri": "/api/v1/items/abc"
 }
-time=2026-03-07T11:53:40.298Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-03-07T11:53:40.298Z level=INFO msg="server stopped"
+time=2026-08-17T23:58:07.871Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-17T23:58:07.871Z level=INFO msg="server stopped"
 ```
 
 ## Response Sequences
@@ -330,8 +318,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-03-07T11:53:57.795Z level=INFO msg="coats loaded" count=1
-time=2026-03-07T11:53:57.796Z level=INFO msg="server started" address=0.0.0.0:9102
+time=2026-08-17T23:58:07.906Z level=INFO msg="coats loaded" count=1
+time=2026-08-17T23:58:07.906Z level=INFO msg="server started" address=0.0.0.0:9102
 === Request 1 (expect 503) ===
 {"status": "unavailable"}
 HTTP 503
@@ -347,8 +335,8 @@ HTTP 200
 === Request 4 (cycles back to 503) ===
 {"status": "unavailable"}
 HTTP 503
-time=2026-03-07T11:53:59.082Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-03-07T11:53:59.083Z level=INFO msg="server stopped"
+time=2026-08-17T23:58:08.931Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-17T23:58:08.932Z level=INFO msg="server stopped"
 ```
 
 ## Header Matching
@@ -394,8 +382,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-03-07T11:54:14.389Z level=INFO msg="coats loaded" count=2
-time=2026-03-07T11:54:14.390Z level=INFO msg="server started" address=0.0.0.0:9103
+time=2026-08-17T23:58:08.966Z level=INFO msg="coats loaded" count=2
+time=2026-08-17T23:58:08.966Z level=INFO msg="server started" address=0.0.0.0:9103
 === With Authorization header ===
 {
   "secret": "treasure"
@@ -405,8 +393,8 @@ time=2026-03-07T11:54:14.390Z level=INFO msg="server started" address=0.0.0.0:91
 {
   "error": "missing auth"
 }
-time=2026-03-07T11:54:15.454Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-03-07T11:54:15.455Z level=INFO msg="server stopped"
+time=2026-08-17T23:58:09.991Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-17T23:58:09.991Z level=INFO msg="server stopped"
 ```
 
 ## Validation Errors
@@ -468,9 +456,9 @@ kill %2 %1 2>/dev/null; wait 2>/dev/null
 ```
 
 ```output
-time=2026-03-07T11:56:48.506Z level=INFO msg="coats loaded" count=2
-time=2026-03-07T11:56:48.507Z level=INFO msg="server started" address=0.0.0.0:9106
-time=2026-03-07T11:56:49.517Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
+time=2026-08-17T23:58:10.046Z level=INFO msg="coats loaded" count=2
+time=2026-08-17T23:58:10.046Z level=INFO msg="server started" address=0.0.0.0:9106
+time=2026-08-17T23:58:11.058Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
 === Captured coat files ===
 GET_api_v1_users_200.yaml
 POST_api_v1_users_201.yaml
@@ -481,15 +469,11 @@ coats:
       request:
         method: GET
         uri: /api/v1/users
-        headers:
-            Accept: '*/*'
-            User-Agent: curl/8.5.0
       response:
         code: 200
         headers:
-            Content-Length: "65"
             Content-Type: application/json
-            Date: Sat, 07 Mar 2026 11:56:50 GMT
+            Date: Mon, 17 Aug 2026 23:58:12 GMT
         body: |-
             {
               "users": [
@@ -503,8 +487,8 @@ coats:
                 }
               ]
             }
-time=2026-03-07T11:56:51.615Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-03-07T11:56:51.615Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-03-07T11:56:51.615Z level=INFO msg="proxy stopped"
-time=2026-03-07T11:56:51.615Z level=INFO msg="server stopped"
+time=2026-08-17T23:58:13.095Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-17T23:58:13.095Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-17T23:58:13.095Z level=INFO msg="proxy stopped"
+time=2026-08-17T23:58:13.095Z level=INFO msg="server stopped"
 ```
