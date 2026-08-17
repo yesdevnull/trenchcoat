@@ -17,11 +17,6 @@
       }
     }
   },
-  "patternProperties": {
-    "^x-": {
-      "description": "Extension key ignored by Trenchcoat. Exists so a coat file can hold a YAML anchor for coats to merge in; any other unknown top-level key is a parse error."
-    }
-  },
   "$defs": {
     "coat": {
       "description": "An individual request/response mock definition.",

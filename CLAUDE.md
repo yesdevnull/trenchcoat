@@ -306,9 +306,11 @@ both reject such a coat, so this is only reachable via `WithCoat`/`WithCoats`.
 ### Validation Rules
 
 - Coat files are parsed **strictly**: an unknown YAML or JSON key is a parse
-  error naming the field, not a silently ignored one. Top-level keys beginning
-  `x-` are the one exception, so a file can hold a YAML anchor for coats to
-  merge in
+  error naming the field, not a silently ignored one. Top-level **YAML** keys
+  beginning `x-` are the one exception, so a file can hold an anchor for coats
+  to merge in. JSON has no anchors, so a JSON `x-` key is an unknown field like
+  any other. `coatfile.schema.json` cannot tell the two formats apart, so it
+  describes the JSON rule and flags an `x-` key in either
 - A coat file must contain exactly one document, in either format; anything
   after it is an error. A YAML file may still carry the markers of a single
   document — a leading `---`, a trailing `---` or `...` — but a second `---`

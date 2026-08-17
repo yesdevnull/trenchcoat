@@ -111,6 +111,11 @@ func parseFileWith(path, format string, unmarshal func([]byte, any) error) (*Fil
 	// That exists for one idiom: a key whose only job is to hold a YAML anchor
 	// that coats below merge in. Everything else is a typo, and letting a typo
 	// through is what strict decoding is for.
+	//
+	// Only YAML ever reaches this loop. Extensions is json:"-", so a JSON x- key
+	// is an unknown field to the JSON decoder and is refused there -- which is
+	// the intended scope, since JSON has no anchors and so no use for the idiom.
+	// The format is still named in the message because parseFileWith is shared.
 	for key := range f.Extensions {
 		if !strings.HasPrefix(key, "x-") {
 			return nil, fmt.Errorf("parsing %s coat file %s: unknown top-level field %q (only \"x-\" prefixed extension keys are allowed)", format, path, key)
