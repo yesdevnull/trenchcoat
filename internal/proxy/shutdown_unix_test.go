@@ -108,7 +108,7 @@ func TestProxy_ShutdownWaitsForCaptureFromInFlightRequest(t *testing.T) {
 
 	// The request is parked in the upstream, so no capture has registered yet:
 	// this is the state Shutdown finds on Ctrl-C mid-request.
-	arrived.Wait()
+	waitOrFail(t, &arrived, 30*time.Second, "the request to reach the upstream")
 
 	shutdownErr := make(chan error, 1)
 	started := time.Now()
@@ -120,7 +120,7 @@ func TestProxy_ShutdownWaitsForCaptureFromInFlightRequest(t *testing.T) {
 		t.Fatalf("shutdown failed: %v", err)
 	}
 	elapsed := time.Since(started)
-	request.Wait()
+	waitOrFail(t, &request, 30*time.Second, "the client request to finish")
 
 	// Blocked on the FIFO, the capture can never finish, so a Shutdown that
 	// waits for it must spend its whole capture-drain budget. Returning early
@@ -138,8 +138,9 @@ func TestProxy_ShutdownWaitsForCaptureFromInFlightRequest(t *testing.T) {
 // connections still active, and it does not stop the handlers running on them.
 // Waiting on the capture group at that point is the very race the ordering fix
 // was meant to close: a handler still in flight can call captures.Go while
-// Wait is in progress, and Add concurrent with Wait is documented WaitGroup
-// misuse that panics.
+// Wait is in progress, and an Add that takes the counter from zero to positive
+// during a Wait is documented WaitGroup misuse that panics when the
+// interleaving lands.
 //
 // The panic itself needs an interleaving too narrow to force reliably, so this
 // pins the observable half. With a capture parked on a FIFO, a Shutdown that
@@ -208,7 +209,7 @@ func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 	}()
-	parkedArrived.Wait()
+	waitOrFail(t, &parkedArrived, 30*time.Second, "the parked request to reach the upstream")
 
 	// Let the blocked capture reach its write before shutting down.
 	time.Sleep(100 * time.Millisecond)
@@ -224,7 +225,7 @@ func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
 		_, _ = io.Copy(io.Discard, fifo)
 		_ = fifo.Close()
 	}
-	parkedRequest.Wait()
+	waitOrFail(t, &parkedRequest, 30*time.Second, "the parked request to finish")
 
 	if shutdownErr == nil {
 		t.Fatal("expected Shutdown to report the HTTP drain deadline")
@@ -232,5 +233,25 @@ func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
 	if elapsed > httpDrain+500*time.Millisecond {
 		t.Fatalf("Shutdown took %s: after the HTTP drain failed it went on to wait for captures, which races captures.Go in the handlers still running",
 			elapsed.Round(time.Millisecond))
+	}
+}
+
+// waitOrFail waits for wg, failing instead of blocking the whole package if the
+// requests never arrive. The request goroutines swallow their errors, so a
+// connection refused or an ephemeral-port exhaustion would otherwise leave the
+// counter short and hang until the 10-minute package timeout, taking every
+// other test's result with it.
+func waitOrFail(t *testing.T, wg *sync.WaitGroup, within time.Duration, what string) {
+	t.Helper()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(within):
+		t.Fatalf("timed out after %s waiting for %s", within, what)
 	}
 }

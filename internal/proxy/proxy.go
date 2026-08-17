@@ -34,6 +34,10 @@ var sanitiseRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // maxBodySize is the maximum number of bytes read from request or response bodies.
 const maxBodySize = 10 << 20 // 10 MiB
 
+// CaptureConcurrency is how many captures may be writing at once. Exported so
+// tests assert against the real bound rather than a copy of the number.
+const CaptureConcurrency = 20
+
 // hopByHopHeaders are headers that must not be forwarded by proxies.
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
@@ -185,7 +189,7 @@ func New(cfg Config) (*Proxy, error) {
 		counters:   make(map[string]int),
 		inflight:   make(map[string]int),
 		baseLocks:  make(map[string]*sync.Mutex),
-		captureSem: make(chan struct{}, 20),
+		captureSem: make(chan struct{}, CaptureConcurrency),
 	}
 
 	return p, nil
@@ -244,8 +248,9 @@ func (p *Proxy) WaitCaptures() {
 //
 // The HTTP drain must come first, and must have succeeded. While handlers can
 // still run they keep registering captures, so waiting on the capture group
-// alongside them both races the registration (Add concurrent with Wait is
-// documented WaitGroup misuse, and panics) and misses every capture those
+// alongside them both races the registration (Add is documented WaitGroup
+// misuse when it takes the counter from zero to positive while a Wait is in
+// progress, and panics when it does) and misses every capture those
 // requests go on to spawn -- silently losing exactly the coat files the user
 // was recording when they pressed Ctrl-C.
 //
@@ -269,8 +274,9 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 		// The drain gave up with connections still active, and it does not stop
 		// the handlers running on them. Those handlers can still reach
 		// captures.Go, so waiting here would be the very race this ordering was
-		// meant to avoid: Add concurrent with Wait is documented WaitGroup
-		// misuse and panics. Captures still in flight are lost, which is the
+		// meant to avoid -- Add taking the counter from zero to positive while a
+		// Wait is in progress is documented WaitGroup misuse, and panics when the
+		// interleaving lands. Captures still in flight are lost, which is the
 		// nature of a shutdown that has already run out of time.
 		return err
 	}
@@ -632,8 +638,8 @@ type nameTemplateData struct {
 //
 // Only the decision is serialised, not the write. Holding p.mu across the write
 // would make every capture wait for whichever one is currently touching the
-// disk -- so a single slow write stalls all of them, and captureSem's bound of
-// 20 concurrent captures becomes unreachable.
+// disk -- so a single slow write stalls all of them, and the CaptureConcurrency
+// bound becomes unreachable.
 func (p *Proxy) reserveFilename(method, urlPath string, status int) (filename, base string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

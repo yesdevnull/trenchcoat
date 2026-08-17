@@ -32,8 +32,8 @@ import (
 // Unix-only: it needs mkfifo. CI runs the suite on ubuntu-latest.
 func TestProxy_CaptureConcurrencyIsBounded(t *testing.T) {
 	const (
-		bound  = 20 // captureSem capacity
-		extra  = 5  // requests beyond the bound
+		bound  = proxy.CaptureConcurrency
+		extra  = 5 // requests beyond the bound
 		total  = bound + extra
 		settle = 250 * time.Millisecond
 	)
@@ -110,7 +110,7 @@ func TestProxy_CaptureConcurrencyIsBounded(t *testing.T) {
 				_ = resp.Body.Close()
 			}(i)
 		}
-		wg.Wait()
+		waitOrFail(t, &wg, 60*time.Second, "the request batch to finish")
 	}
 
 	// The blocking captures must be the ones holding the slots, so they go

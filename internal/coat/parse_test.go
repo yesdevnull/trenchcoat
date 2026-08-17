@@ -495,10 +495,10 @@ func assertEqual[T comparable](t *testing.T, field string, expected, actual T) {
 }
 
 func TestParseFile_UnknownFieldIsAnError(t *testing.T) {
-	// coatfile.schema.json sets additionalProperties: false throughout, but the
-	// parsers discarded unknown keys, so a typo validated clean and quietly
-	// changed behaviour: 'mehtod: POST' left the coat defaulting to GET, so the
-	// intended POSTs 404'd and unintended GETs matched.
+	// coatfile.schema.json sets additionalProperties: false throughout, so a
+	// misspelt key must be an error rather than a silent default: 'mehtod: POST'
+	// leaves the coat on GET, so the POSTs it was written for 404 while
+	// unintended GETs match it.
 	dir := t.TempDir()
 
 	yamlPath := filepath.Join(dir, "typo.yaml")

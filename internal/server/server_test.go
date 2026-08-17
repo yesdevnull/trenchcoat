@@ -201,8 +201,8 @@ func TestServe_DelayMs(t *testing.T) {
 	assertEqual(t, "status", 200, resp.StatusCode)
 }
 
-func TestServe_DelayJitter(t *testing.T) {
-	// Pins the delay range on both sides. The lower bound alone is satisfied by
+func TestServe_DelayMsPlusJitter_StaysInRange(t *testing.T) {
+	// Pins the delay range, and nothing more. The lower bound alone is satisfied by
 	// the base delay, so it says nothing about jitter; the upper bound is what
 	// stops jitter drifting outside the range the coat asked for.
 	const (
@@ -953,11 +953,12 @@ func TestCalls_ReturnsClonedHeaders(t *testing.T) {
 }
 
 func TestServe_CoatWithNoResponse_Returns500(t *testing.T) {
-	// A coat with neither response nor responses matched, was counted as
-	// called, and was then answered with 404 "no matching coat" -- blaming the
-	// request for a defect in the coat, and naming nothing, so even --verbose
-	// could not say which coat was at fault. Only reachable through the
-	// programmatic API, which does not run coat.Validate.
+	// A coat with neither response nor responses is a fault in the coat, not a
+	// request that found no match, so it must be a 500 that names the coat --
+	// answering 404 "no matching coat" blames the request and names nothing, so
+	// not even --verbose can identify the culprit. Reachable through
+	// WithCoat/WithCoats, which take a Coat as given; WithCoatFile validates
+	// via LoadPaths.
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
 

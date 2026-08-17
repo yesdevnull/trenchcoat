@@ -1553,7 +1553,12 @@ func TestProxy_NameTemplate(t *testing.T) {
 	}
 }
 
-func TestProxyCapturesConcurrencyBounded(t *testing.T) {
+// TestProxy_EveryRequestProducesOneCapture checks capture completeness under
+// concurrency: 30 distinct paths must yield 30 coat files. It does not test
+// captureSem -- deleting the semaphore leaves it green, because nothing here
+// observes how many captures run at once. TestProxy_CaptureConcurrencyIsBounded
+// covers that.
+func TestProxy_EveryRequestProducesOneCapture(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		_, _ = fmt.Fprint(w, "ok")
@@ -1598,9 +1603,8 @@ func TestProxyCapturesConcurrencyBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Exactly one file per request. A floor of 20 would let a third of the
-	// captures go missing -- to a filename collision, or a write error swallowed
-	// by the capture path -- and still report success.
+	// Exactly one file per request: a lower-bound assertion would tolerate
+	// captures silently lost to a filename collision or a swallowed write error.
 	if len(files) != numRequests {
 		t.Errorf("expected %d coat files, one per request, got %d", numRequests, len(files))
 	}
@@ -1609,10 +1613,9 @@ func TestProxyCapturesConcurrencyBounded(t *testing.T) {
 }
 
 func TestProxy_PreservesPercentEncodedPath(t *testing.T) {
-	// The proxy rebuilt the upstream URL from the decoded r.URL.Path, so an
-	// encoded separator was handed to the upstream as a real one and reached a
-	// different route than the client asked for. A capture tool that quietly
-	// rewrites the request is recording something that never happened.
+	// An encoded separator must reach the upstream as the client wrote it. A
+	// capture tool that rewrites the request in transit records something that
+	// never happened.
 	seen := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen <- r.RequestURI
@@ -1698,7 +1701,12 @@ func TestProxy_CaptureOmitsClientSpecificHeaders(t *testing.T) {
 	captured := readOnlyCoat(t, writeDir)
 	headers := captured.Coats[0].Request.Headers
 
-	for _, unwanted := range []string{"User-Agent", "Accept", "Accept-Encoding", "Accept-Language", "Host", "Content-Length", "Connection"} {
+	// Host and Connection are deliberately absent from this list. net/http moves
+	// the host to r.Host and deletes it from r.Header, and this client sends no
+	// Connection header, so neither could fail here regardless of what the
+	// capture path does. Connection-scoped headers are covered by
+	// TestProxy_CaptureOmitsConnectionScopedHeaders.
+	for _, unwanted := range []string{"User-Agent", "Accept", "Accept-Encoding", "Accept-Language", "Content-Length"} {
 		for k := range headers {
 			if strings.EqualFold(k, unwanted) {
 				t.Errorf("captured coat records %s: %q, which ties the coat to the client that recorded it", k, headers[k])
