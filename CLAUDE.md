@@ -202,7 +202,7 @@ Available fields and methods:
 |------------------|------------------------------------------------------|
 | `.Method`        | Request method                                       |
 | `.Path`          | Request URL path                                     |
-| `.Body`          | Request body (capped at `maxRecordBodySize`)         |
+| `.Body`          | Request body (capped at 1 MiB, `maxRecordBodySize`)  |
 | `.Query "page"`  | First value of a query parameter, `""` if absent     |
 | `.Segment 3`     | Nth path segment, 0-indexed from root, `""` if absent|
 
