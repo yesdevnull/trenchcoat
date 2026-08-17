@@ -1789,3 +1789,56 @@ func TestProxy_CapturedCoatReplaysFromAnotherClient(t *testing.T) {
 		t.Fatalf("replaying a captured coat from a different client got %d: %s", replayed.StatusCode, body)
 	}
 }
+
+func TestProxy_DropsHeadersNamedInConnection(t *testing.T) {
+	// RFC 9110 7.6.1: the Connection header lists headers that are scoped to
+	// this hop only. Filtering just the static hop-by-hop set forwards them
+	// anyway, in both directions.
+	sawUpstream := make(chan http.Header, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpstream <- r.Header.Clone()
+		w.Header().Set("Connection", "X-Internal-Backend")
+		w.Header().Set("X-Internal-Backend", "pod-7")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     t.TempDir(),
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(5 * time.Second) })
+
+	req, err := http.NewRequest("GET", p.URL()+"/hop", nil)
+	if err != nil {
+		t.Fatalf("failed to build request: %v", err)
+	}
+	req.Header.Set("Connection", "keep-alive, X-Trace-Token")
+	req.Header.Set("X-Trace-Token", "secret")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	p.WaitCaptures()
+
+	upstreamHeaders := <-sawUpstream
+	if got := upstreamHeaders.Get("X-Trace-Token"); got != "" {
+		t.Errorf("X-Trace-Token was scoped to this hop by the client's Connection header but reached the upstream as %q", got)
+	}
+
+	if got := resp.Header.Get("X-Internal-Backend"); got != "" {
+		t.Errorf("X-Internal-Backend was scoped to this hop by the upstream's Connection header but reached the client as %q", got)
+	}
+}

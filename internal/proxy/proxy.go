@@ -78,8 +78,20 @@ type Proxy struct {
 	counters map[string]int // for append dedup mode
 	inflight map[string]int // base names currently being written, by capture count
 
-	captures   sync.WaitGroup
-	captureSem chan struct{} // bounds concurrent capture goroutines
+	captures sync.WaitGroup
+
+	// captureSem bounds how many captures may be writing at once. It is
+	// acquired inside the capture goroutine, not before it is spawned, so it
+	// bounds concurrent disk work rather than the number of goroutines: a burst
+	// of requests queues that many goroutines, each holding its copy of the
+	// request and response bodies (up to maxBodySize each) until a slot frees.
+	//
+	// Acquiring it in the handler instead would bound the memory too, at the
+	// cost of blocking the proxied request on capture I/O -- a slow or stalled
+	// --write-dir would then stall the proxying itself, which is the one thing
+	// a transparent proxy must not do. Bounded memory is not worth coupling
+	// relay latency to the disk.
+	captureSem chan struct{}
 }
 
 // New creates a new Proxy.
@@ -295,9 +307,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Copy headers, filtering hop-by-hop headers.
+	// Copy headers, filtering hop-by-hop headers and any the client scoped to
+	// this hop by naming them in its Connection header.
+	reqConnectionScoped := connectionScopedHeaders(r.Header)
 	for k, vv := range r.Header {
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || reqConnectionScoped[strings.ToLower(k)] {
 			continue
 		}
 		for _, v := range vv {
@@ -344,9 +358,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Relay response to client, filtering hop-by-hop headers.
+	// Relay response to client, filtering hop-by-hop headers and any the
+	// upstream scoped to its hop by naming them in its Connection header.
+	respConnectionScoped := connectionScopedHeaders(upstreamResp.Header)
 	for k, vv := range upstreamResp.Header {
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || respConnectionScoped[strings.ToLower(k)] {
 			continue
 		}
 		for _, v := range vv {
@@ -635,6 +651,28 @@ func (p *Proxy) isStrippedHeader(header string) bool {
 func isHopByHopHeader(h string) bool {
 	_, ok := hopByHopHeaders[http.CanonicalHeaderKey(h)]
 	return ok
+}
+
+// connectionScopedHeaders returns the lower-cased names a message listed in its
+// Connection header, which RFC 9110 7.6.1 scopes to that hop alone and which a
+// proxy must not forward. The static hopByHopHeaders set covers the standard
+// names; this covers the ones a peer nominates per message, such as
+// "Connection: keep-alive, X-Trace-Token".
+func connectionScopedHeaders(h http.Header) map[string]bool {
+	var scoped map[string]bool
+	for _, value := range h.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			token = strings.ToLower(strings.TrimSpace(token))
+			if token == "" {
+				continue
+			}
+			if scoped == nil {
+				scoped = make(map[string]bool)
+			}
+			scoped[token] = true
+		}
+	}
+	return scoped
 }
 
 // clientSpecificRequestHeaders are request headers that describe the client or
