@@ -215,14 +215,25 @@ func (p *Proxy) WaitCaptures() {
 	p.captures.Wait()
 }
 
-// Shutdown gracefully stops the proxy, waiting for pending captures to complete
-// within half the timeout, then draining HTTP connections with the remaining time.
+// Shutdown gracefully stops the proxy, draining HTTP connections within half
+// the timeout, then waiting for pending captures with the remaining time.
+//
+// The HTTP drain must come first. While the server is still accepting,
+// handlers keep registering captures, so waiting on the capture group first
+// both races with the registration (Add concurrent with Wait is documented
+// WaitGroup misuse, and panics) and misses every capture the requests still in
+// flight go on to spawn -- silently losing exactly the coat files the user was
+// trying to record when they pressed Ctrl-C.
 func (p *Proxy) Shutdown(timeout time.Duration) error {
-	// Split timeout: half for capture drain, half for HTTP drain.
-	captureDrain := timeout / 2
-	httpDrain := timeout - captureDrain
+	// Split timeout: half for HTTP drain, half for capture drain.
+	httpDrain := timeout / 2
+	captureDrain := timeout - httpDrain
 
-	// Wait for captures with timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), httpDrain)
+	defer cancel()
+	shutdownErr := p.httpServer.Shutdown(ctx)
+
+	// No handler can start now, so the capture group can only shrink.
 	done := make(chan struct{})
 	go func() {
 		p.captures.Wait()
@@ -235,9 +246,7 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 		p.logger.Warn("timed out waiting for pending captures to complete")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), httpDrain)
-	defer cancel()
-	return p.httpServer.Shutdown(ctx)
+	return shutdownErr
 }
 
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -307,6 +316,24 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Register the capture before the response reaches the client. Once the
+	// client has its response it may immediately call WaitCaptures or Shutdown,
+	// and a capture that has not yet joined the WaitGroup is invisible to both.
+	if shouldCapture {
+		capReq := captureRequest{
+			Method:   r.Method,
+			URI:      r.URL.Path,
+			RawQuery: r.URL.RawQuery,
+			Header:   r.Header.Clone(),
+			Body:     reqBody,
+		}
+		p.captures.Go(func() {
+			p.captureSem <- struct{}{}
+			defer func() { <-p.captureSem }()
+			p.captureCoatFromCopy(capReq, upstreamResp, respBody)
+		})
+	}
+
 	// Relay response to client, filtering hop-by-hop headers.
 	for k, vv := range upstreamResp.Header {
 		if isHopByHopHeader(k) {
@@ -331,21 +358,6 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	// Capture if applicable.
-	if shouldCapture {
-		capReq := captureRequest{
-			Method:   r.Method,
-			URI:      r.URL.Path,
-			RawQuery: r.URL.RawQuery,
-			Header:   r.Header.Clone(),
-			Body:     reqBody,
-		}
-		p.captures.Go(func() {
-			p.captureSem <- struct{}{}
-			defer func() { <-p.captureSem }()
-			p.captureCoatFromCopy(capReq, upstreamResp, respBody)
-		})
-	}
 }
 
 func (p *Proxy) shouldCapture(urlPath string) bool {
