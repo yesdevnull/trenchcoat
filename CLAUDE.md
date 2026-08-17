@@ -56,7 +56,7 @@ renovate.json             Renovate dependency auto-update config
 - Go 1.25.x. The exact patch release lives in the `toolchain` directive in
   `go.mod`; CI installs it via `go-version-file: go.mod`, and Renovate bumps it.
   The `go` directive stays at `1.25` as the minimum for consumers of the package.
-- golangci-lint v2.11.4 (pinned in CI)
+- golangci-lint. The version is pinned in `.github/workflows/ci.yaml`.
 
 ### Installing Go
 
@@ -293,7 +293,7 @@ See `docs/test-coverage-analysis.md` for detailed coverage data and test invento
 
 GitHub Actions workflow at `.github/workflows/ci.yaml` runs:
 - **Test**: `go test -v -count=1 -race -coverprofile=coverage.out` (uploads coverage artifact)
-- **Lint**: golangci-lint v2.10.1 via `golangci-lint-action`
+- **Lint**: golangci-lint via `golangci-lint-action`
 - **Vet**: `go vet`, `go mod tidy` check, `govulncheck`
 - **Format**: `gofmt -l`, `goimports -l` (fail if any files are unformatted)
 - **Build**: Cross-compile linux/darwin/windows x amd64/arm64 with ldflags (depends on all other jobs)
