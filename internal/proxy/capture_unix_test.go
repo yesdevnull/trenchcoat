@@ -47,10 +47,11 @@ func TestProxy_CaptureConcurrencyIsBounded(t *testing.T) {
 	writeDir := t.TempDir()
 
 	// The first `bound` captures block; with dedupe=overwrite each path maps to
-	// exactly one filename, so they can be picked in advance.
+	// exactly one filename, so the temp file each one writes can be picked in
+	// advance and a FIFO placed there.
 	blockedPaths := make([]string, 0, bound)
 	for i := range bound {
-		p := filepath.Join(writeDir, fmt.Sprintf("GET_b_%d_200.yaml", i))
+		p := blockingPathFor(writeDir, fmt.Sprintf("GET_b_%d_200.yaml", i))
 		if err := syscall.Mkfifo(p, 0600); err != nil {
 			t.Fatalf("failed to create fifo %s: %v", p, err)
 		}

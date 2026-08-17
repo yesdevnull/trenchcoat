@@ -573,14 +573,14 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 	defer baseMu.Unlock()
 
 	fullPath := filepath.Join(p.config.WriteDir, filename)
-	if err := os.WriteFile(fullPath, data, 0600); err != nil {
+	if err := writeFileAtomic(fullPath, data); err != nil {
 		p.logger.Error("failed to write coat file", "path", fullPath, "error", err)
 		return
 	}
 
 	if bodyFileName != "" {
 		bodyFilePath := filepath.Join(p.config.WriteDir, bodyFileName)
-		if err := os.WriteFile(bodyFilePath, []byte(bodyFileContent), 0600); err != nil {
+		if err := writeFileAtomic(bodyFilePath, []byte(bodyFileContent)); err != nil {
 			p.logger.Error("failed to write body file, removing the coat that references it",
 				"path", bodyFilePath, "coat", fullPath, "error", err)
 			if rmErr := os.Remove(fullPath); rmErr != nil {
@@ -595,17 +595,50 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 	}
 }
 
+// tempPathFor returns the path a capture writes before renaming into place.
+//
+// The name is derived from the destination rather than randomised. Captures
+// that resolve to the same destination are serialised by lockBase, so two of
+// them never hold this path at once, and a predictable name is no more exposed
+// than the destination itself -- which the proxy already creates, without
+// O_EXCL, at a name derived from the request. Keeping it predictable also means
+// a test can block a capture by placing a FIFO where it is about to write.
+func tempPathFor(path string) string {
+	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp")
+}
+
+// writeFileAtomic writes data to path so that no reader ever observes a partial
+// file: it writes a temp file in the same directory and renames it into place,
+// and rename is atomic.
+//
+// os.WriteFile truncates and then writes, so anything reading concurrently --
+// `trenchcoat serve --watch` pointed at the capture directory, or `trenchcoat
+// validate` -- sees a prefix of the new content or an empty file, neither of
+// which is a valid coat. The temp file must share a directory with the
+// destination, since rename cannot cross filesystems.
+func writeFileAtomic(path string, data []byte) error {
+	tmp := tempPathFor(path)
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return fmt.Errorf("writing %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("renaming %s to %s: %w", tmp, path, err)
+	}
+	return nil
+}
+
 // lockBase returns the mutex serialising writes for a capture base name,
 // creating it on first use.
 //
 // Two captures can resolve to the same filename -- the default dedupe mode
 // gives every capture of a request the same stable name, and the base
 // deliberately excludes the query string, so requests differing only by query
-// collide. os.WriteFile is open(O_TRUNC) then write with nothing pairing the
-// two, so concurrent writers can interleave as A-open, B-open (truncating),
-// A-write, B-write and leave B's bytes over the head of A's: an unparseable
-// coat file on disk. Serialising by base means the last writer wins whole,
-// while captures of different requests still run concurrently up to captureSem.
+// collide. Rename makes the swap into place atomic, but both captures would
+// otherwise build their content in the same temp file, tearing that and then
+// renaming the result into place. Serialising by base gives each one exclusive
+// use of the temp path, so the last writer wins whole, while captures of
+// different requests still run concurrently up to CaptureConcurrency.
 func (p *Proxy) lockBase(base string) *sync.Mutex {
 	p.mu.Lock()
 	defer p.mu.Unlock()
