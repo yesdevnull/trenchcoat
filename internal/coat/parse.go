@@ -37,6 +37,13 @@ func ParseFile(path string) (*File, error) {
 // a misspelt 'mehtod' leaves the coat defaulting to GET, so the POSTs it was
 // written for 404 while unintended GETs match, and `trenchcoat validate` calls
 // the file clean.
+//
+// It also rejects anything after the first document. yaml.Decoder.Decode reads
+// one document and stops, so without this check every coat after a '---'
+// separator silently does not exist, and syntactically broken content after a
+// document is accepted without a word. A null document is tolerated so the
+// markers a single-document file may carry -- a trailing '---' or '...' -- keep
+// working.
 func unmarshalStrictYAML(data []byte, v any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -48,7 +55,20 @@ func unmarshalStrictYAML(data []byte, v any) error {
 		}
 		return err
 	}
-	return nil
+
+	for {
+		var extra any
+		err := dec.Decode(&extra)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if extra != nil {
+			return fmt.Errorf("unexpected content after the YAML document")
+		}
+	}
 }
 
 // unmarshalStrictJSON decodes JSON, rejecting unknown keys for the same reason.

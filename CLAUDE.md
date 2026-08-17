@@ -309,8 +309,10 @@ both reject such a coat, so this is only reachable via `WithCoat`/`WithCoats`.
   error naming the field, not a silently ignored one. Top-level keys beginning
   `x-` are the one exception, so a file can hold a YAML anchor for coats to
   merge in
-- A JSON coat file must contain exactly one document; anything after it is an
-  error
+- A coat file must contain exactly one document, in either format; anything
+  after it is an error. A YAML file may still carry the markers of a single
+  document — a leading `---`, a trailing `---` or `...` — but a second `---`
+  document is rejected rather than silently ignored
 - A URI containing `*`, `?` or `[` must be a valid `doublestar` pattern
 - `request.uri` is required
 - Must have exactly one of `response` (singular) or `responses` (plural)

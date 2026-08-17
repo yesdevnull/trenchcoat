@@ -573,22 +573,54 @@ func TestParseFile_KnownFieldsStillParse(t *testing.T) {
 }
 
 func TestParseFile_RejectsTrailingContent(t *testing.T) {
-	// json.Decoder reads one value and stops, unlike json.Unmarshal which
-	// required the whole input to be a single document. Without an explicit
-	// check, a second appended object or trailing garbage loads silently and
-	// half the file's coats simply do not exist.
+	// Both decoders read one document and stop, unlike json.Unmarshal and
+	// yaml.Unmarshal which took the whole input. Without an explicit check, a
+	// second document or trailing garbage loads silently and half the file's
+	// coats simply do not exist.
 	dir := t.TempDir()
 
 	for name, body := range map[string]string{
 		"second-document.json":  `{"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]}{"coats":[]}`,
 		"trailing-garbage.json": `{"coats":[{"name":"a","request":{"uri":"/a"},"response":{"code":200}}]} garbage`,
+		"second-document.yaml":  "coats:\n  - name: a\n    request:\n      uri: /a\n    response:\n      code: 200\n---\ncoats:\n  - name: b\n    request:\n      uri: /b\n    response:\n      code: 200\n",
+		"trailing-garbage.yaml": "coats:\n  - name: a\n    request:\n      uri: /a\n    response:\n      code: 200\n--- }{ invalid\n",
 	} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := coat.ParseFile(path); err == nil {
-			t.Errorf("%s: expected an error for content after the JSON document", name)
+			t.Errorf("%s: expected an error for content after the first document", name)
+		}
+	}
+}
+
+func TestParseFile_AcceptsYAMLDocumentMarkers(t *testing.T) {
+	// Rejecting a second document must not reject the markers a single-document
+	// file may carry: a leading '---', a trailing '---' or '...' terminator, and
+	// a trailing comment are all one document as far as the file's author is
+	// concerned. A bare '---' at the end decodes as a null document, so nothing
+	// but a null one is tolerated after the first.
+	dir := t.TempDir()
+
+	coats := "coats:\n  - name: a\n    request:\n      uri: /a\n    response:\n      code: 200\n"
+	for name, body := range map[string]string{
+		"leading.yaml":          "---\n" + coats,
+		"trailing-marker.yaml":  coats + "---\n",
+		"document-end.yaml":     coats + "...\n",
+		"trailing-comment.yaml": coats + "# nothing more\n",
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := coat.ParseFile(path)
+		if err != nil {
+			t.Errorf("%s: expected no error, got %v", name, err)
+			continue
+		}
+		if len(f.Coats) != 1 {
+			t.Errorf("%s: expected 1 coat, got %d", name, len(f.Coats))
 		}
 	}
 }
