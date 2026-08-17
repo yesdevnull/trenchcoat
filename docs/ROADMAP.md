@@ -1,8 +1,8 @@
 # Trenchcoat Roadmap
 
-## Feature Proposals — Ranked by Benefit vs Complexity
-
-Features are ranked from best ROI (high benefit, low complexity) to lowest.
+Open proposals first, ranked by benefit against complexity, then what has
+shipped, then what was considered and declined. Declined items keep their
+reasoning, so the same idea does not get re-proposed from scratch.
 
 Complexity is scope, not elapsed time. **Low** — a change within one package,
 roughly a few hundred lines with its tests. **Medium** — a new field or flag
@@ -12,106 +12,87 @@ to the coat file format that existing coats must survive.
 
 ---
 
-### Tier 2 — Medium Benefit, Low-Medium Complexity
+## Open
 
-#### 8. Conditional Responses (Request-Aware Sequences)
+### 1. Passthrough Mode
 
-**Benefit:** Medium | **Complexity:** Medium
+**Benefit:** High | **Complexity:** Medium
 
-Sequences currently cycle through responses regardless of request content.
-Allow sequences to branch based on request properties:
+A hybrid of serve and proxy: serve matched coats as mocks, forward unmatched
+requests to a real upstream. A `--passthrough <upstream-url>` flag on `serve`.
 
-```yaml
-responses:
-  - when:
-      body: '{"retry": true}'
-    code: 200
-    body: "retried-ok"
-  - code: 503
-    body: "unavailable"
-sequence: match  # try to match conditions first, fall through to default
-```
+This is the incremental-mocking workflow the tool is named for — start by
+proxying everything, then replace real calls with coats one at a time, and the
+suite keeps passing throughout. It is the highest-value item open, and the
+cheapest of the ambitious ones: both halves already exist and work, so the job
+is routing and merging the two request paths rather than new machinery.
 
-This would let a single coat handle both the "normal" and "retry" cases
-without needing separate coat definitions.
+Worth deciding up front whether a passthrough request is also *captured*, which
+would make it a one-command version of the proxy-then-serve loop.
 
-#### 9. Import / Compose Coat Files
+### 2. Sharing Response Fragments Across Files
 
 **Benefit:** Medium | **Complexity:** Medium
 
-Allow coat files to reference shared definitions to reduce duplication:
+Note the reduced scope: duplication *within* one YAML file is already solved by
+anchors and merge keys, and the idiom is documented in the README.
 
 ```yaml
-imports:
-  - ./shared-headers.yaml
-
 coats:
-  - name: get-users
-    request:
-      uri: /api/v1/users
-    response:
-      headers: !inherit shared-headers
+  - name: first
+    request: {uri: /a}
+    response: &defaults
       code: 200
-      body: '{"users": []}'
+      headers: {Content-Type: application/json}
+  - name: second
+    request: {uri: /b}
+    response:
+      <<: *defaults
 ```
 
-Or simpler: a `defaults` block at the top of a coat file that applies to all
-coats in that file:
+What that does not cover is the live case:
 
-```yaml
-defaults:
-  response:
-    headers:
-      Content-Type: "application/json"
-      X-Request-Id: "*"
+- Sharing across **files**, which anchors cannot span.
+- **JSON** coat files, which have no anchors at all.
 
-coats:
-  - name: get-users
-    # inherits Content-Type and X-Request-Id headers
-    ...
-```
+A top-level `defaults` block would address both, but it is a coat file format
+change: parsing is strict and `coats` is currently the only top-level key a file
+may hold, so `defaults` has to be added to the parser, the validator, the JSON
+Schema and the docs together. An `imports:` list is the more general answer and
+the more expensive one; prefer `defaults` unless a concrete need for imports
+turns up.
 
-The `defaults` approach is simpler and solves 80% of the duplication problem.
+### 3. Proxy TLS Listener
 
----
+**Benefit:** Medium | **Complexity:** Low-Medium
 
-### Tier 3 — Nice to Have
+`Proxy` has `Start` but no `StartTLS`, so the proxy's own listener is plain HTTP
+only. Connections *to* the upstream already do TLS, including
+`--tls-server-name` and a TLS 1.2 floor; it is only the client-facing side that
+cannot.
 
-#### 10. Stateful Mock Behaviour
+This blocks capturing from a client that will not talk to a plain-HTTP proxy, or
+one whose base URL must be `https://` for its own reasons. The mock server
+already has `StartTLS` and self-signed certificate generation to model it on, so
+most of the work is a flag, a listener and tests.
+
+### 4. OpenAPI / Swagger Import
 
 **Benefit:** Medium | **Complexity:** High
 
-Allow coats to define state transitions — e.g. "after POST /users succeeds,
-GET /users returns the created user." This is powerful but adds significant
-complexity. Consider whether this is better handled by test-level logic using
-the programmatic API rather than in coat files.
+Generate coat files from an OpenAPI spec, most likely as a `trenchcoat generate`
+subcommand. Useful for bootstrapping mocks for a large API.
 
-#### 11. OpenAPI / Swagger Import
-
-**Benefit:** Medium | **Complexity:** High
-
-Generate coat files from an OpenAPI spec. Useful for bootstrapping mocks for
-large APIs, but the mapping from schema to realistic response bodies requires
-heuristics. Could be a standalone `trenchcoat generate` subcommand.
-
-#### 12. Passthrough Mode (Existing Proposal)
-
-**Benefit:** Medium | **Complexity:** Medium
-
-A hybrid of serve and proxy. Serve matched coats as mocks, but forward
-unmatched requests to a real upstream URL. Becomes a `--passthrough
-<upstream-url>` flag on the `serve` subcommand.
-
-This is useful for incremental mocking — start by proxying everything, then
-gradually replace real calls with coats. The proxy and server infrastructure
-already exist, so the main work is the routing logic and merging the two code
-paths.
+The original objection was that mapping a schema to a realistic response body
+needs heuristics. That is less true than it looks: OpenAPI carries `example` and
+`examples` on both schemas and responses, and a spec that has them needs no
+heuristics at all. Scope it to "use the examples the spec provides, skip what it
+does not" and the item shrinks a long way. Generating plausible bodies from bare
+type information is the part to leave out.
 
 ---
 
 ## Implemented
-
-The following features have been implemented and are available:
 
 ### Tier 1 — High Benefit, Low Complexity
 
@@ -152,17 +133,75 @@ The following features have been implemented and are available:
 
 ## Archived / Declined
 
+### ~~Conditional Responses (Request-Aware Sequences)~~
+
+Proposed a `when:` condition on individual responses with `sequence: match`, so
+one coat could serve both a "normal" and a "retry" case. **Declined — the
+motivating example already works**, using two coats and body matching:
+
+```yaml
+coats:
+  - name: retry-case
+    request:
+      method: POST
+      uri: /work
+      body: '"retry": true'
+      body_match: contains
+    response: {code: 200, body: retried-ok}
+  - name: default-case
+    request: {method: POST, uri: /work}
+    response: {code: 503, body: unavailable}
+```
+
+A body constraint counts towards specificity, so the constrained coat outranks
+the unconstrained one and the fallthrough works without any ordering tricks. The
+proposal's stated benefit was avoiding "separate coat definitions", which is a
+cosmetic saving over something that already works, paid for with a second
+matching language inside the response list.
+
+The one thing it would have added that this does not is a *sequence* that
+branches — and that is the stateful-behaviour idea below, which was declined on
+its own merits.
+
+### ~~Stateful Mock Behaviour~~
+
+Coats defining state transitions — "after `POST /users` succeeds, `GET /users`
+returns the created user". **Declined.** It is a state machine expressed in
+YAML, which means a language with no debugger, no types and no way to assert on
+a transition that did not fire. Sequences cover the ordered case, and anything
+genuinely stateful is better written as test-level logic against the
+programmatic API, where the host language already has all of that. The original
+proposal raised this doubt itself.
+
+### ~~TLS Minimum Version Enforcement~~
+
+Proposed enforcing a TLS 1.2 floor on the mock server's listener, on the
+assumption that Go's defaults allow TLS 1.0. **Declined — already true.** Go's
+own default server minimum is TLS 1.2; probed directly, the server answers a
+TLS 1.0 or 1.1 ClientHello with `protocol version not supported` and negotiates
+1.2 and 1.3 normally. There is nothing to implement.
+
 ### ~~Complex Directory Structure~~
 
-Support recursive directory loading with organisational conventions (e.g.
-`mocks/users/list.yaml`, `mocks/auth/login.yaml`) and potential shared default
-headers/config at directory level. **Declined** — the flat structure with
-explicit `--coats` paths is sufficient. The `defaults` block proposal (item 9)
-addresses the shared config need without the complexity.
+Recursive directory loading with organisational conventions (e.g.
+`mocks/users/list.yaml`) and shared config at directory level. **Declined** —
+the flat structure with explicit `--coats` paths is sufficient, and the
+shared-fragment need is covered by item 2 above without the complexity.
 
 ### ~~Request Body Matching~~ (Implemented)
 
 Implemented as exact string matching via the `request.body` field (`*string` —
-`nil` means match any body, set value means exact match). Proxy capture
-includes `--capture-body` flag (default: `true`). Enhanced with `body_match`
-modes (glob, contains, regex) in item 1.
+`nil` means match any body, a set value means exact match), then extended with
+`body_match` modes in item #1.
+
+---
+
+## Not a feature, but tracked
+
+**Windows has no test coverage.** CI runs the suite on `ubuntu-latest` only,
+while the Build job cross-compiles for Windows and the README offers it as a
+supported platform. Unix-only behaviour lives behind `//go:build unix`, so the
+paths that differ on Windows — path separators in `body_file` resolution and in
+captured coat filenames, signal handling, file locking during capture — are
+never exercised. Adding `windows-latest` to the test matrix is cheap; the likely
+cost is discovering it has been broken for a while.
