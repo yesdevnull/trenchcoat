@@ -130,3 +130,107 @@ func TestProxy_ShutdownWaitsForCaptureFromInFlightRequest(t *testing.T) {
 			elapsed.Round(time.Millisecond), captureDrain)
 	}
 }
+
+// TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain covers the case
+// the ordering fix left open.
+//
+// http.Server.Shutdown returns ctx.Err() when its deadline passes with
+// connections still active, and it does not stop the handlers running on them.
+// Waiting on the capture group at that point is the very race the ordering fix
+// was meant to close: a handler still in flight can call captures.Go while
+// Wait is in progress, and Add concurrent with Wait is documented WaitGroup
+// misuse that panics.
+//
+// The panic itself needs an interleaving too narrow to force reliably, so this
+// pins the observable half. With a capture parked on a FIFO, a Shutdown that
+// goes on to wait spends its whole capture-drain budget; one that correctly
+// declines to wait returns as soon as the HTTP drain gives up.
+func TestProxy_ShutdownDoesNotDrainCapturesAfterAFailedHTTPDrain(t *testing.T) {
+	const (
+		shutdownTimeout = 2 * time.Second
+		httpDrain       = shutdownTimeout / 2
+	)
+
+	parked := make(chan struct{})
+	var parkedArrived sync.WaitGroup
+	parkedArrived.Add(1)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/parked" {
+			parkedArrived.Done()
+			<-parked
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("captured"))
+	}))
+	defer upstream.Close()
+
+	writeDir := t.TempDir()
+	coatPath := filepath.Join(writeDir, "GET_blocked_200.yaml")
+	if err := syscall.Mkfifo(coatPath, 0600); err != nil {
+		t.Fatalf("failed to create fifo at %s: %v", coatPath, err)
+	}
+
+	p, err := proxy.New(proxy.Config{
+		UpstreamURL:  upstream.URL,
+		WriteDir:     writeDir,
+		StripHeaders: []string{},
+		Dedupe:       "overwrite",
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if _, err := p.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start proxy: %v", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// One capture that can never finish, so the capture group stays non-empty.
+	resp, err := client.Get(p.URL() + "/blocked")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	// One request that never returns, so the HTTP drain must time out.
+	var parkedRequest sync.WaitGroup
+	parkedRequest.Add(1)
+	go func() {
+		defer parkedRequest.Done()
+		resp, err := client.Get(p.URL() + "/parked")
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+	parkedArrived.Wait()
+
+	// Let the blocked capture reach its write before shutting down.
+	time.Sleep(100 * time.Millisecond)
+
+	started := time.Now()
+	shutdownErr := p.Shutdown(shutdownTimeout)
+	elapsed := time.Since(started)
+
+	// Release everything before asserting, so a failure cannot hang the suite.
+	close(parked)
+	fifo, ferr := os.OpenFile(coatPath, os.O_RDONLY, 0)
+	if ferr == nil {
+		_, _ = io.Copy(io.Discard, fifo)
+		_ = fifo.Close()
+	}
+	parkedRequest.Wait()
+
+	if shutdownErr == nil {
+		t.Fatal("expected Shutdown to report the HTTP drain deadline")
+	}
+	if elapsed > httpDrain+500*time.Millisecond {
+		t.Fatalf("Shutdown took %s: after the HTTP drain failed it went on to wait for captures, which races captures.Go in the handlers still running",
+			elapsed.Round(time.Millisecond))
+	}
+}

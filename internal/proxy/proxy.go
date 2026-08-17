@@ -232,12 +232,16 @@ func (p *Proxy) WaitCaptures() {
 // Shutdown gracefully stops the proxy, draining HTTP connections within half
 // the timeout, then waiting for pending captures with the remaining time.
 //
-// The HTTP drain must come first. While the server is still accepting,
-// handlers keep registering captures, so waiting on the capture group first
-// both races with the registration (Add concurrent with Wait is documented
-// WaitGroup misuse, and panics) and misses every capture the requests still in
-// flight go on to spawn -- silently losing exactly the coat files the user was
-// trying to record when they pressed Ctrl-C.
+// The HTTP drain must come first, and must have succeeded. While handlers can
+// still run they keep registering captures, so waiting on the capture group
+// alongside them both races the registration (Add concurrent with Wait is
+// documented WaitGroup misuse, and panics) and misses every capture those
+// requests go on to spawn -- silently losing exactly the coat files the user
+// was recording when they pressed Ctrl-C.
+//
+// A drain that times out leaves handlers running, so it returns without
+// waiting: there is no safe way to wait for captures that something may still
+// be adding to.
 func (p *Proxy) Shutdown(timeout time.Duration) error {
 	// Split timeout: half for HTTP drain, half for capture drain.
 	httpDrain := timeout / 2
@@ -245,9 +249,18 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), httpDrain)
 	defer cancel()
-	shutdownErr := p.httpServer.Shutdown(ctx)
+	if err := p.httpServer.Shutdown(ctx); err != nil {
+		// The drain gave up with connections still active, and it does not stop
+		// the handlers running on them. Those handlers can still reach
+		// captures.Go, so waiting here would be the very race this ordering was
+		// meant to avoid: Add concurrent with Wait is documented WaitGroup
+		// misuse and panics. Captures still in flight are lost, which is the
+		// nature of a shutdown that has already run out of time.
+		return err
+	}
 
-	// No handler can start now, so the capture group can only shrink.
+	// The drain succeeded, so every handler has returned and no new one can
+	// start: the capture group can only shrink from here.
 	done := make(chan struct{})
 	go func() {
 		p.captures.Wait()
@@ -260,7 +273,7 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 		p.logger.Warn("timed out waiting for pending captures to complete")
 	}
 
-	return shutdownErr
+	return nil
 }
 
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
