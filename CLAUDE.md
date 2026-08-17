@@ -306,11 +306,29 @@ both reject such a coat, so this is only reachable via `WithCoat`/`WithCoats`.
 ### Validation Rules
 
 - Coat files are parsed **strictly**: an unknown YAML or JSON key is a parse
-  error naming the field, not a silently ignored one. Top-level **YAML** keys
-  beginning `x-` are the one exception, so a file can hold an anchor for coats
-  to merge in. JSON has no anchors, so a JSON `x-` key is an unknown field like
-  any other. `coatfile.schema.json` cannot tell the two formats apart, so it
-  describes the JSON rule and flags an `x-` key in either
+  error naming the field, not a silently ignored one. No prefix is exempt, in
+  either format: `coats` is the only top-level key a coat file may hold
+- To share a response fragment between coats without repeating it, anchor on
+  the response of the first coat that uses it and merge from the coats after:
+
+  ```yaml
+  coats:
+    - name: first
+      request: {uri: /a}
+      response: &defaults        # anchor on a real field, not a holder key
+        code: 200
+        headers: {Content-Type: application/json}
+    - name: second
+      request: {uri: /b}
+      response:
+        <<: *defaults            # code 200, Content-Type merged in
+    - name: third
+      request: {uri: /c}
+      response:
+        <<: *defaults
+        code: 201                # merged values can be overridden
+  ```
+
 - A coat file must contain exactly one document, in either format; anything
   after it is an error. A YAML file may still carry the markers of a single
   document — a leading `---`, a trailing `---` or `...` — but a second `---`

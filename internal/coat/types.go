@@ -5,15 +5,6 @@ package coat
 // File represents the top-level structure of a coat file.
 type File struct {
 	Coats []Coat `yaml:"coats" json:"coats"`
-
-	// Extensions collects top-level keys that are not part of the schema. Only
-	// names beginning "x-" are permitted, and nothing reads them: they exist so
-	// a coat file can hold a YAML anchor for coats to merge in, which strict
-	// decoding would otherwise reject. See parse.go.
-	//
-	// json:"-" scopes that to YAML: JSON has no anchors, so a JSON x- key is an
-	// unknown field like any other.
-	Extensions map[string]any `yaml:",inline" json:"-"`
 }
 
 // Coat is an individual request/response mock definition.
