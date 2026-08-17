@@ -331,6 +331,15 @@ hook warns when you forget.
 - File naming: `{METHOD}_{sanitised_path}_{status}.yaml`
 - Dedupe strategies: `overwrite` (stable filename), `skip`, `append`
 - Headers in `--strip-headers` are redacted from captures
+- Every request header a coat records becomes a **match constraint at replay**,
+  so client- and connection-specific headers are never captured: hop-by-hop
+  headers, `Content-Length`, `Host`, `User-Agent`, `Accept`, `Accept-Encoding`
+  and `Accept-Language`. Recording them would tie a coat to the tool that
+  captured it — a capture taken with curl would 404 for every other client.
+  `Content-Type` and custom headers such as `X-Api-Key` are still captured.
+- `Content-Length` is never recorded in a captured **response** either: the
+  captured body differs from the upstream body whenever it is pretty-printed or
+  decompressed, and `net/http` derives the correct length when serving
 - Gzip-compressed upstream responses are decompressed for readability in captured coats
 - Redirect responses are captured as-is (client does not follow redirects and returns the 3xx response as-is via `http.ErrUseLastResponse`)
 - To proxy to an upstream whose TLS certificate is issued for a different

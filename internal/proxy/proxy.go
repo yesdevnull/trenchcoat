@@ -405,9 +405,10 @@ func (p *Proxy) captureCoatFromCopy(req captureRequest, resp *http.Response, res
 	if !p.config.NoHeaders {
 		reqHeaders = make(map[string]string)
 		for k := range req.Header {
-			if !p.isStrippedHeader(k) {
-				reqHeaders[k] = req.Header.Get(k)
+			if p.isStrippedHeader(k) || isUncapturedRequestHeader(k) {
+				continue
 			}
+			reqHeaders[k] = req.Header.Get(k)
 		}
 
 		respHeaders = make(map[string]string)
@@ -592,6 +593,39 @@ func (p *Proxy) isStrippedHeader(header string) bool {
 // should not be forwarded by proxies.
 func isHopByHopHeader(h string) bool {
 	_, ok := hopByHopHeaders[http.CanonicalHeaderKey(h)]
+	return ok
+}
+
+// clientSpecificRequestHeaders are request headers that describe the client or
+// the connection rather than the request, and so are never recorded in a
+// captured coat.
+//
+// Every header a coat records becomes a match constraint the replayed request
+// must satisfy. Recording these ties the coat to the tool that captured it: a
+// coat taken with curl carries User-Agent: curl/8.7.1 and Accept: */*, and any
+// other client replaying the identical request gets a 404. Content-Length and
+// Host describe the message and its destination, not its identity, and
+// Accept-Encoding is added by the transport rather than the caller.
+//
+// Headers that genuinely qualify a request -- Content-Type, and custom headers
+// such as X-Api-Key -- are still captured.
+var clientSpecificRequestHeaders = map[string]struct{}{
+	"accept":          {},
+	"accept-encoding": {},
+	"accept-language": {},
+	"content-length":  {},
+	"host":            {},
+	"user-agent":      {},
+}
+
+// isUncapturedRequestHeader reports whether a request header should be left out
+// of a captured coat, covering both connection-scoped headers and the
+// client-specific set above.
+func isUncapturedRequestHeader(h string) bool {
+	if isHopByHopHeader(h) {
+		return true
+	}
+	_, ok := clientSpecificRequestHeaders[strings.ToLower(h)]
 	return ok
 }
 
