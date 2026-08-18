@@ -104,9 +104,12 @@ without changing the file. The script builds the binary from the working tree,
 copies `docs/demo-fixtures/` into a throwaway directory and runs there, and
 forces `TZ=UTC`; getting any of those wrong records misleading output.
 
+Showboat is run as `uvx showboat@latest`, so `uv` is the only prerequisite —
+there is nothing to install first.
+
 Changing a command *shown* in the demo, rather than its output, is the one case
-the script does not cover: use `showboat extract` to emit the command list, edit
-that, and rebuild from it.
+the script does not cover: use `uvx showboat@latest extract docs/demo.md` to
+emit the command list, edit that, and rebuild from it.
 
 ## Development
 
