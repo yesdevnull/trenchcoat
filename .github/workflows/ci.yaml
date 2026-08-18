@@ -175,7 +175,7 @@ jobs:
       # interpreter would let a 3.10+ construct through.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.9"
+          python-version: "3.14"
 
       # scripts/test_scripts.py drives regenerate-demo.sh, which runs Showboat
       # as `uvx showboat@latest`. Without uv that test would skip rather than
