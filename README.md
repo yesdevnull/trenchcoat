@@ -109,8 +109,14 @@ Captured file names are built from `{METHOD}_{sanitised_path}_{status_code}`, wi
 | Strategy | File name | Behaviour |
 |---|---|---|
 | `overwrite` | `{base}.yaml` | Stable name, so a repeated request replaces the earlier capture. |
-| `skip` | `{base}_{unix_timestamp}.yaml` | Requests matching an existing capture are not written again. |
+| `skip` | `{base}.yaml` | Requests matching an existing capture are not written again — the first capture is left alone rather than replaced. |
 | `append` | `{base}_{unix_timestamp}.yaml`, then `{base}_{n}_{unix_timestamp}.yaml` | Every request is kept as a separate file. |
+
+`skip` shares `overwrite`'s stable name deliberately: it guarantees one file per
+request, so a timestamp only made the name unpredictable — and it meant two
+concurrent captures that straddled a second boundary wrote the two files `skip`
+exists to prevent. The difference from `overwrite` is which capture survives:
+`overwrite` replaces the earlier one, `skip` keeps it and discards the new one.
 
 `--name-template` replaces the `{base}` portion. Rendered names are stripped of path separators and any character outside `[a-zA-Z0-9_-]`.
 
