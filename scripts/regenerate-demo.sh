@@ -14,7 +14,9 @@
 #   scripts/regenerate-demo.sh --check   # report drift, change nothing
 #
 # Showboat itself is run with `uvx showboat@latest`, so there is nothing to
-# install first beyond uv.
+# install first beyond uv. Whenever the answer is anything but "no drift", its
+# own output is kept in demo-verify.log rather than thrown away with the work
+# directory.
 #
 # The parts that are easy to get wrong, and why this is a script:
 #
@@ -70,6 +72,7 @@ cd "$(dirname "$0")/.."
 
 DOC="docs/demo.md"
 FIXTURES="docs/demo-fixtures"
+VERIFY_LOG="demo-verify.log"
 
 [ -f "$DOC" ] || {
 	echo "error: $DOC not found" >&2
@@ -88,14 +91,40 @@ go build -o "$work/bin/trenchcoat" ./cmd/trenchcoat/
 
 cp "$FIXTURES"/*.yaml "$work/"
 
+# Showboat's own output is the only account of what it did, and $work is removed
+# on exit, so keep a copy anywhere it might be wanted.
+keep_log() {
+	cp "$work/verify.log" "$VERIFY_LOG" 2>/dev/null || true
+}
+
 echo "Re-running every block in $DOC..."
+rc=0
 TZ=UTC PATH="$work/bin:$PATH" uvx --quiet showboat@latest verify "$DOC" \
 	--workdir "$work" \
-	--output "$work/regenerated.md" >"$work/verify.log" 2>&1 || true
+	--output "$work/regenerated.md" >"$work/verify.log" 2>&1 || rc=$?
+
+# showboat verify exits 1 whenever the rerun differs from the recording, and the
+# log timestamps guarantee it always does, so 0 and 1 are both normal here --
+# the verdict comes from the filtered diff below. Anything else is showboat or
+# uv itself failing, and its output is the only clue there is. Discarding the
+# status meant a broken Showboat surfaced as a huge spurious diff with no log,
+# and, on the regenerate path, as a partial document copied over $DOC.
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+	keep_log
+	echo "error: showboat exited $rc, which is neither success nor a difference." >&2
+	echo "Last 20 lines of its output:" >&2
+	tail -20 "$work/verify.log" >&2
+	echo "" >&2
+	echo "Full output: $VERIFY_LOG. $DOC has not been touched." >&2
+	exit 1
+fi
 
 [ -s "$work/regenerated.md" ] || {
+	keep_log
 	echo "error: showboat produced no document. Last 20 lines of its output:" >&2
 	tail -20 "$work/verify.log" >&2
+	echo "" >&2
+	echo "Full output: $VERIFY_LOG" >&2
 	exit 1
 }
 
@@ -128,6 +157,9 @@ else
 	echo ""
 	filter "$DOC" | diff -u - <(filter "$work/regenerated.md") |
 		sed -e "s|^--- -|--- $DOC (recorded)|" -e 's|^+++ /dev/fd.*|+++ (current behaviour)|' || true
+	keep_log
+	echo ""
+	echo "Showboat's own account of the rerun: $VERIFY_LOG"
 	drifted=true
 fi
 
