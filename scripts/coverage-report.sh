@@ -12,6 +12,18 @@
 # Use it when you want to know what a change did to coverage, or before
 # deciding where the next test should go.
 #
+# Every figure here is per-package self-coverage: there is no -coverpkg, so each
+# package is measured only by its own tests. A function exercised solely from
+# another package's tests therefore reads as 0.0% -- internal/coat.StringPtr
+# does, though internal/matcher's tests and the public API's both call it. Check
+# before writing a test the list says is missing.
+#
+# -coverpkg=./... would fix that and ruin the table instead. Measured: it leaves
+# the runtime alone (13.1s to 14.2s) but redefines each package's number as its
+# share of the whole module, so internal/httputil drops from 100.0% to 0.1% and
+# "Coverage by package" stops meaning what it says. The caveat is the lesser
+# problem, so it is written down rather than traded away.
+#
 #   scripts/coverage-report.sh              # per-package table and total
 #   scripts/coverage-report.sh --functions  # also list functions under 100%
 #   scripts/coverage-report.sh --min 90     # only functions under 90%
@@ -136,8 +148,10 @@ echo "Total: $total"
 
 if [ "$show_functions" = true ]; then
 	echo ""
-	echo "Functions below ${min_coverage}%"
-	echo "---------------------------"
+	echo "Functions below ${min_coverage}%, as measured by their own package's tests"
+	echo "-------------------------------------------------------------"
+	echo "(a function only another package's tests reach reads as 0.0% here)"
+	echo ""
 	go tool cover -func="$PROFILE" |
 		awk -v limit="$min_coverage" '
 			$1 != "total:" {

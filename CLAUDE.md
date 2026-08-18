@@ -318,6 +318,10 @@ Run `scripts/coverage-report.sh` for current coverage. There is deliberately no
 coverage report committed to the repository — the one that used to be here
 drifted five months before anyone noticed.
 
+Its figures are per-package self-coverage. A function only another package's
+tests reach reads as 0.0%, so check before writing a test the `--min` list says
+is missing; the script's header explains why `-coverpkg` is not the answer.
+
 ## CI
 
 `.github/workflows/ci.yaml`:
