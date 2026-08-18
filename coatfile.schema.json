@@ -161,14 +161,14 @@
           "type": "string"
         },
         "delay_ms": {
-          "description": "Delay in milliseconds before sending the response. Combined with delay_jitter_ms, must not exceed 60000.",
+          "description": "Delay in milliseconds before sending the response. The server also rejects delay_ms + delay_jitter_ms over 60000, which JSON Schema cannot express: this schema checks each field alone, so an editor may show a coat as valid that 'trenchcoat validate' rejects.",
           "type": "integer",
           "minimum": 0,
           "maximum": 60000,
           "default": 0
         },
         "delay_jitter_ms": {
-          "description": "Random jitter in milliseconds added on top of delay_ms. The actual additional delay is a random value in the range [0, N) where N is this value. Combined with delay_ms, must not exceed 60000.",
+          "description": "Random jitter in milliseconds added on top of delay_ms. The actual additional delay is a random value in the range [0, N) where N is this value. The server also rejects delay_ms + delay_jitter_ms over 60000, which JSON Schema cannot express: this schema checks each field alone, so an editor may show a coat as valid that 'trenchcoat validate' rejects.",
           "type": "integer",
           "minimum": 0,
           "maximum": 60000,
