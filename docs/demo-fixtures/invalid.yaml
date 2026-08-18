@@ -1,0 +1,15 @@
+coats:
+  - name: broken
+    request:
+      uri: ""
+    response:
+      code: 200
+      body: inline
+      body_file: also-a-file.json
+  - name: also-broken
+    request:
+      uri: /test
+    response:
+      code: 200
+    responses:
+      - code: 200

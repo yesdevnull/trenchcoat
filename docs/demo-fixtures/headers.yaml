@@ -1,0 +1,16 @@
+coats:
+  - name: authorized
+    request:
+      uri: /api/v1/secret
+      headers:
+        Authorization: "Bearer *"
+    response:
+      code: 200
+      body: '{"secret": "treasure"}'
+
+  - name: unauthorized
+    request:
+      uri: /api/v1/secret
+    response:
+      code: 401
+      body: '{"error": "missing auth"}'
