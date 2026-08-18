@@ -105,7 +105,15 @@ copies `docs/demo-fixtures/` into a throwaway directory and runs there, and
 forces `TZ=UTC`; getting any of those wrong records misleading output.
 
 Showboat is run as `uvx showboat@latest`, so `uv` is the only prerequisite —
-there is nothing to install first.
+there is nothing to install first. CI runs the same `--check` in the Demo Drift
+job, so forgetting to regenerate fails the build rather than going unnoticed.
+
+The demo's shell blocks wait for each listener to accept a connection instead of
+sleeping a fixed second. Keep it that way: a `sleep` long enough to be reliable
+in CI is dead time on every run, and one short enough to feel fast is a flake.
+Wait on the port with bash's `/dev/tcp` rather than curl — a curl probe against
+the *proxy* forwards a request upstream and captures it, which changes the very
+output the document is recording.
 
 Changing a command *shown* in the demo, rather than its output, is the one case
 the script does not cover: use `uvx showboat@latest extract docs/demo.md` to
@@ -298,6 +306,7 @@ drifted five months before anyone noticed.
 - **Vet & Static Analysis** — `go vet`, `go mod tidy` check, `govulncheck` (fails the job)
 - **Format** — `gofmt -l`, `goimports -l`
 - **Claude Code Hooks** — `.claude/hooks/test_hooks.py` on Python 3.9
+- **Demo Drift** — `scripts/regenerate-demo.sh --check`, so a behaviour change cannot leave `docs/demo.md` advertising the old behaviour
 - **GoReleaser Config** — `goreleaser check`
 - **Build** — cross-compile linux/darwin/windows × amd64/arm64, needs all of the above
 
