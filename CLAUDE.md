@@ -63,7 +63,7 @@ trenchcoat.go             Public API package for Go test integration
 trenchcoat_test.go        Public API tests
 README.md                 User-facing specification — see above
 coatfile.schema.json      JSON Schema for coat files (hand-maintained)
-.golangci.yml             Linter set, so `make lint` and CI agree
+.golangci.yml             Linter set (not version) shared by `make lint` and CI
 .claude/
   settings.json           Checked-in Claude Code config (PostToolUse hooks)
   hooks/
@@ -135,7 +135,10 @@ emit the command list, edit that, and rebuild from it.
   `go.mod`; CI installs it via `go-version-file: go.mod`, and Renovate bumps it.
   The `go` directive stays at `1.25` as the minimum for consumers of the package.
 - golangci-lint. The version is pinned in `.github/workflows/ci.yaml` and the
-  linter set in `.golangci.yml`, so a local run matches CI.
+  linter set in `.golangci.yml`. Those are not the same guarantee: `make lint`
+  runs whatever is on `PATH`, so a local run matches CI only if the versions
+  agree. `make lint` reads the pinned version out of the workflow and warns when
+  yours differs — a different golangci-lint means a different `staticcheck`.
 
 ### Installing Go
 

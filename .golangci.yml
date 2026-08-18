@@ -1,9 +1,13 @@
 version: "2"
 
-# The linter set is pinned here rather than left to the default so `make lint`
-# and the CI Lint job agree. Without it, each runs whatever the locally
-# installed golangci-lint considers standard, and a version skew between a
-# contributor's machine and CI shows up as an unreproducible failure.
+# The linter *set* is pinned here rather than left to the default, so `make
+# lint` and the CI Lint job at least run the same linters. Without it, each runs
+# whatever the locally installed golangci-lint considers standard.
+#
+# This file cannot pin the linter *version*: `make lint` runs whatever is on
+# PATH, and a different golangci-lint carries a different staticcheck vintage.
+# The version is pinned only in .github/workflows/ci.yaml; `make lint` compares
+# against it and warns on a mismatch, which is as close to parity as this gets.
 
 linters:
   default: standard # errcheck, govet, ineffassign, staticcheck, unused
