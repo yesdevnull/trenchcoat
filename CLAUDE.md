@@ -315,21 +315,32 @@ drifted five months before anyone noticed.
 - **Vet & Static Analysis** — `go vet`, `go mod tidy` check, `govulncheck` (fails the job)
 - **Format** — `gofmt -l`, `goimports -l`
 - **Claude Code Hooks** — `.claude/hooks/test_hooks.py` on Python 3.9
-- **Demo Drift** — `scripts/regenerate-demo.sh --check`, so a behaviour change cannot leave `docs/demo.md` advertising the old behaviour
 - **GoReleaser Config** — `goreleaser check`
 - **Build** — cross-compile linux/darwin/windows × amd64/arm64, needs all of the above
+
+`.github/workflows/demo.yaml`:
+
+- **Demo Drift** — `scripts/regenerate-demo.sh --check`, so a behaviour change cannot leave `docs/demo.md` advertising the old behaviour
+
+It is a separate workflow because `ci.yaml` ignores `docs/**`, and `paths-ignore`
+skips the whole workflow rather than a job. The drift check has to run for a
+pull request that edits `docs/demo.md` or a fixture — exactly what `ci.yaml`
+skips — and `paths-ignore` cannot be negated, so `demo.yaml` uses `paths` with
+an allow-list instead. Actions has no cross-workflow `needs`, so **Build** no
+longer waits on it; Demo Drift gates as its own check.
 
 Tool versions are pinned in the workflow `env` block, each behind a
 `# renovate:` annotation that a customManager in `renovate.json` reads. Do not
 reintroduce `@latest` installs — they make a run unreproducible and let an
 upstream release break an unrelated pull request.
 
-`paths-ignore` skips the entire workflow, but on a pull request it is evaluated
-against the whole `base..head` diff rather than the latest push — a pull request
-touching any non-docs file runs every time, whatever a later commit changes.
-Only one whose entire diff is docs is skipped. That is safe only while no job
-here is a required status check; if branch protection is enabled on `main`, drop
-the filters.
+`ci.yaml`'s `paths-ignore` skips the entire workflow, but on a pull request it is
+evaluated against the whole `base..head` diff rather than the latest push — a
+pull request touching any non-docs file runs every time, whatever a later commit
+changes. Only one whose entire diff is docs is skipped. That is safe only while
+no job here is a required status check; if branch protection is enabled on
+`main`, drop the filters. `examples/**` is not ignored: `examples/go-tests` is a
+real test package that `go test ./...` runs.
 
 `.github/workflows/release.yaml` runs GoReleaser on a `v*` tag.
 
