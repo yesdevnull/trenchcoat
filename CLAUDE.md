@@ -71,8 +71,9 @@ coatfile.schema.json      JSON Schema for coat files (hand-maintained)
     coat-schema-sync.py   Warns when coat types drift from coatfile.schema.json
     test_hooks.py         Tests for both hooks
 .github/workflows/
-  ci.yaml                 Test, lint, vet, format, hooks, goreleaser check, build
-  release.yaml            Tag-triggered GoReleaser publish
+  ci.yaml                 Test, lint, vet, format, hooks/scripts, goreleaser check, build
+  demo.yaml               Demo Drift — separate, because ci.yaml ignores docs/**
+  release.yaml            Tag-triggered test, then GoReleaser publish
 .goreleaser.yaml          GoReleaser config for cross-platform releases
 renovate.json             Renovate dependency auto-update config
 ```
