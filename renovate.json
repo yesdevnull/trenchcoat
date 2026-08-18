@@ -22,12 +22,12 @@
     },
     {
       "customType": "regex",
-      "description": "Update the tool versions pinned in the workflow env blocks. Each is preceded by a '# renovate: datasource=... depName=...' comment naming what it is, because a bare version string in YAML carries no clue as to which project it belongs to.",
+      "description": "Update the tool versions pinned in the workflow env blocks. Each is preceded by a '# renovate: datasource=... depName=...' comment naming what it is, because a bare version string in YAML carries no clue as to which project it belongs to. The quotes around the version are optional in the match: YAML does not require them, and Renovate reports nothing for a customManager that matches nothing, so demanding them would let the pin quietly stop being maintained.",
       "managerFilePatterns": [
         "/^\\.github/workflows/.+\\.yaml$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\w+:\\s*\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\w+:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ]
     }
   ],
