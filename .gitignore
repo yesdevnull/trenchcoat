@@ -3,6 +3,7 @@ trenchcoat-*
 coverage.out
 coverage.html
 coverage-test.log
+demo-verify.log
 *.test
 dist/
 
