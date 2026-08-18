@@ -13,6 +13,9 @@
 #   scripts/regenerate-demo.sh           # regenerate in place
 #   scripts/regenerate-demo.sh --check   # report drift, change nothing
 #
+# Showboat itself is run with `uvx showboat@latest`, so there is nothing to
+# install first beyond uv.
+#
 # The parts that are easy to get wrong, and why this is a script:
 #
 #   - It must run against a build of the working tree, not whatever `trenchcoat`
@@ -23,9 +26,10 @@
 #   - TZ=UTC, because the document's log lines are timestamped and it has always
 #     used UTC. Without it the whole document churns to local time.
 #
-# --check always reports a difference even when nothing is wrong: the document
-# records wall-clock timestamps from server logs, so no two runs agree. Read the
-# diff rather than trusting the exit code.
+# --check compares only what a rerun cannot legitimately change. Log timestamps,
+# the document's generation stamp and id, and the HTTP Date header inside a
+# captured coat all differ on every run and are filtered out, so a clean run
+# says so and exits 0 rather than crying wolf.
 
 set -euo pipefail
 
@@ -53,8 +57,10 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-command -v showboat >/dev/null 2>&1 || {
-	echo "error: showboat is not on PATH — install it, then re-run." >&2
+command -v uv >/dev/null 2>&1 || {
+	echo "error: uv is not on PATH. Showboat runs via 'uvx showboat@latest', so" >&2
+	echo "uv is the only prerequisite. See https://docs.astral.sh/uv/" >&2
+	echo "" >&2
 	echo "docs/demo.md must be regenerated, never hand-edited: its output blocks" >&2
 	echo "are only worth anything if a command actually produced them." >&2
 	exit 1
@@ -83,7 +89,7 @@ go build -o "$work/bin/trenchcoat" ./cmd/trenchcoat/
 cp "$FIXTURES"/*.yaml "$work/"
 
 echo "Re-running every block in $DOC..."
-TZ=UTC PATH="$work/bin:$PATH" showboat verify "$DOC" \
+TZ=UTC PATH="$work/bin:$PATH" uvx --quiet showboat@latest verify "$DOC" \
 	--workdir "$work" \
 	--output "$work/regenerated.md" >"$work/verify.log" 2>&1 || true
 
