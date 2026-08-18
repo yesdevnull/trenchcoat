@@ -68,6 +68,19 @@ command -v uv >/dev/null 2>&1 || {
 	exit 1
 }
 
+# The demo's blocks pipe through jq and drive curl. Missing, the rerun records
+# "jq: command not found" into docs/demo.md as faithfully as it records real
+# output -- a document asserting something no command produced, which is the
+# whole failure it exists to prevent.
+for tool in jq curl; do
+	command -v "$tool" >/dev/null 2>&1 || {
+		echo "error: $tool is not on PATH, and the demo's commands use it." >&2
+		echo "The rerun would record the shell's 'command not found' as though" >&2
+		echo "trenchcoat had printed it." >&2
+		exit 1
+	}
+done
+
 cd "$(dirname "$0")/.."
 
 DOC="docs/demo.md"
