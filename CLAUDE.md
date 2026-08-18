@@ -54,6 +54,7 @@ examples/
 scripts/
   coverage-report.sh      On-demand coverage report (backs `make coverage`)
   regenerate-demo.sh      Rebuilds docs/demo.md against the working tree
+  test_scripts.py         Tests for both scripts
 docs/
   demo.md                 CLI demo walkthrough (Showboat-generated)
   demo-fixtures/          Coat files the demo serves — it cannot run without them
@@ -205,16 +206,20 @@ Both scripts are plain stdlib Python with no dependencies, and must stay
 runnable under **Python 3.9** — macOS ships 3.9.6 as `/usr/bin/python3`, and the
 `#!/usr/bin/env python3` shebang resolves to whatever is first on `PATH`. That
 rules out PEP 604 (`str | None`) annotations unless
-`from __future__ import annotations` is present. The CI Hooks job runs the tests
-on 3.9 for exactly this reason.
+`from __future__ import annotations` is present. The CI job runs the tests on
+3.9 for exactly this reason. `scripts/test_scripts.py` is held to the same bar.
 
 ```bash
 python3 .claude/hooks/test_hooks.py     # Test both hooks
+python3 scripts/test_scripts.py         # Test both scripts in scripts/
 ```
 
-The tests drive the real hook scripts against real `gofmt`, `goimports` and
-`git` in throwaway repos. Nothing is mocked — the point of the hooks is that
-they agree with the tools CI runs.
+Both suites drive the real scripts against real `go`, `gofmt`, `goimports`,
+`git` and Showboat in throwaway directories. Nothing is mocked — the point of
+this tooling is that it agrees with what CI runs. `test_scripts.py` builds a
+throwaway Go module for `coverage-report.sh`, and for `regenerate-demo.sh` a
+one-block Showboat document whose only content is a timestamped slog line: the
+timestamp must be masked and the rest of the line must still be compared.
 
 ### Build with Version Info
 
@@ -321,7 +326,7 @@ drifted five months before anyone noticed.
 - **Lint** — golangci-lint, version pinned in the workflow, linters in `.golangci.yml`
 - **Vet & Static Analysis** — `go vet`, `go mod tidy` check, `govulncheck` (fails the job)
 - **Format** — `gofmt -l`, `goimports -l`
-- **Claude Code Hooks** — `.claude/hooks/test_hooks.py` on Python 3.9
+- **Claude Code Hooks & Scripts** — `.claude/hooks/test_hooks.py` and `scripts/test_scripts.py` on Python 3.9
 - **GoReleaser Config** — `goreleaser check`
 - **Build** — cross-compile linux/darwin/windows × amd64/arm64, needs all of the above
 
