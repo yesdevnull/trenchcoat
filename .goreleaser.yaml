@@ -45,3 +45,15 @@ release:
   # "auto" reads the semver prerelease suffix and marks -alpha, -beta and -rc
   # accordingly.
   prerelease: auto
+
+  # Publish as a draft and let the workflow flip it live once every archive is
+  # attached. This is GitHub's prescribed order for immutable releases: assets
+  # and the git tag are locked the moment a release is published, so anything
+  # uploaded afterwards has to fight the lock. Creating the release complete
+  # and then publishing it means there is never an incomplete published
+  # release to repair.
+  #
+  # It is also the safer failure mode without immutability: a run that dies
+  # midway leaves an unpublished draft rather than a live release missing half
+  # its binaries.
+  draft: true
