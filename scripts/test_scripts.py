@@ -42,8 +42,10 @@ def require(tool: str) -> None:
         raise unittest.SkipTest("%s is not on PATH" % tool)
 
 
-def run(script: Path, *args: str):
-    return subprocess.run([str(script), *args], capture_output=True, text=True)
+def run(script: Path, *args: str, env: dict = None):
+    return subprocess.run(
+        [str(script), *args], capture_output=True, text=True, env=env
+    )
 
 
 TINY_GO_MOD = "module example.com/tiny\n\ngo 1.21\n"
@@ -249,6 +251,27 @@ class RegenerateDemoTest(unittest.TestCase):
         self.assertIn("Behavioural drift", result.stdout)
         self.assertIn('msg="coats loaded from disk"', result.stdout)
         self.assertIn("not modified", result.stdout)
+
+    def test_refuses_to_run_without_jq(self):
+        """The demo's blocks pipe through jq.
+
+        Without it the rerun records "jq: command not found" into the document
+        as though the binary had printed it -- a regenerated document asserting
+        something no command produced.
+        """
+        # A PATH holding only what the script needs to reach the guard: bash for
+        # its own shebang, and uv for the check ahead of this one.
+        bin_dir = self.repo / "minimal-path"
+        bin_dir.mkdir()
+        for tool in ("bash", "uv"):
+            (bin_dir / tool).symlink_to(shutil.which(tool))
+        env = dict(os.environ)
+        env["PATH"] = str(bin_dir)
+
+        result = run(self.repo / "scripts" / REGENERATE_DEMO.name, "--check", env=env)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("jq", result.stderr)
 
 
 if __name__ == "__main__":
