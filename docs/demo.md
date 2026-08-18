@@ -1,7 +1,7 @@
 # Trenchcoat Demo
 
-*2026-08-18T00:21:41Z by Showboat dev*
-<!-- showboat-id: 40f59162-1f98-47d3-b713-e3b2853a221d -->
+*2026-08-18T01:05:40Z by Showboat dev*
+<!-- showboat-id: 7918e2b6-b6d5-4fee-88b2-0ed3b6004f3e -->
 
 Trenchcoat is an extensible mock and proxy-to-mock HTTP server. This demo walks through its key features using the CLI.
 
@@ -138,8 +138,8 @@ Start the mock server and make some requests.
 
 ```bash
 trenchcoat serve --coats basic.yaml --port 9100 &
-# wait for the listener to accept connections
-until (exec 3<>/dev/tcp/localhost/9100) 2>/dev/null; do sleep 0.1; done
+# wait up to 10s for the listener, failing loudly rather than hanging
+for i in {1..100}; do (exec 3<>/dev/tcp/localhost/9100) 2>/dev/null && break; [ "$i" -eq 100 ] && { echo "timed out waiting for a listener on port 9100" >&2; exit 1; }; sleep 0.1; done
 
 echo "=== GET /api/v1/users ==="
 curl -s http://localhost:9100/api/v1/users | jq .
@@ -157,8 +157,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T00:21:42.034Z level=INFO msg="coats loaded" count=2
-time=2026-08-18T00:21:42.035Z level=INFO msg="server started" address=0.0.0.0:9100
+time=2026-08-18T01:05:40.982Z level=INFO msg="coats loaded" count=2
+time=2026-08-18T01:05:40.983Z level=INFO msg="server started" address=0.0.0.0:9100
 === GET /api/v1/users ===
 {
   "users": [
@@ -185,8 +185,8 @@ time=2026-08-18T00:21:42.035Z level=INFO msg="server started" address=0.0.0.0:91
   "method": "GET",
   "uri": "/unknown"
 }
-time=2026-08-18T00:21:42.160Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T00:21:42.160Z level=INFO msg="server stopped"
+time=2026-08-18T01:05:41.109Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:05:41.109Z level=INFO msg="server stopped"
 ```
 
 ## Glob and Regex URI Matching
@@ -223,8 +223,8 @@ coats:
 
 ```bash
 trenchcoat serve --coats patterns.yaml --port 9101 &
-# wait for the listener to accept connections
-until (exec 3<>/dev/tcp/localhost/9101) 2>/dev/null; do sleep 0.1; done
+# wait up to 10s for the listener, failing loudly rather than hanging
+for i in {1..100}; do (exec 3<>/dev/tcp/localhost/9101) 2>/dev/null && break; [ "$i" -eq 100 ] && { echo "timed out waiting for a listener on port 9101" >&2; exit 1; }; sleep 0.1; done
 
 echo "=== Glob: /api/v1/users/42 ==="
 curl -s http://localhost:9101/api/v1/users/42 | jq .
@@ -246,8 +246,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T00:21:42.188Z level=INFO msg="coats loaded" count=3
-time=2026-08-18T00:21:42.188Z level=INFO msg="server started" address=0.0.0.0:9101
+time=2026-08-18T01:05:41.138Z level=INFO msg="coats loaded" count=3
+time=2026-08-18T01:05:41.138Z level=INFO msg="server started" address=0.0.0.0:9101
 === Glob: /api/v1/users/42 ===
 {
   "match": "glob-single-segment"
@@ -269,8 +269,8 @@ time=2026-08-18T00:21:42.188Z level=INFO msg="server started" address=0.0.0.0:91
   "method": "GET",
   "uri": "/api/v1/items/abc"
 }
-time=2026-08-18T00:21:42.324Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T00:21:42.324Z level=INFO msg="server stopped"
+time=2026-08-18T01:05:41.273Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:05:41.273Z level=INFO msg="server stopped"
 ```
 
 ## Response Sequences
@@ -298,8 +298,8 @@ coats:
 
 ```bash
 trenchcoat serve --coats sequences.yaml --port 9102 &
-# wait for the listener to accept connections
-until (exec 3<>/dev/tcp/localhost/9102) 2>/dev/null; do sleep 0.1; done
+# wait up to 10s for the listener, failing loudly rather than hanging
+for i in {1..100}; do (exec 3<>/dev/tcp/localhost/9102) 2>/dev/null && break; [ "$i" -eq 100 ] && { echo "timed out waiting for a listener on port 9102" >&2; exit 1; }; sleep 0.1; done
 
 echo "=== Request 1 (expect 503) ==="
 curl -s -w "\nHTTP %{http_code}\n" http://localhost:9102/api/v1/health
@@ -321,8 +321,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T00:21:42.353Z level=INFO msg="coats loaded" count=1
-time=2026-08-18T00:21:42.353Z level=INFO msg="server started" address=0.0.0.0:9102
+time=2026-08-18T01:05:41.301Z level=INFO msg="coats loaded" count=1
+time=2026-08-18T01:05:41.301Z level=INFO msg="server started" address=0.0.0.0:9102
 === Request 1 (expect 503) ===
 {"status": "unavailable"}
 HTTP 503
@@ -338,8 +338,8 @@ HTTP 200
 === Request 4 (cycles back to 503) ===
 {"status": "unavailable"}
 HTTP 503
-time=2026-08-18T00:21:42.491Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T00:21:42.491Z level=INFO msg="server stopped"
+time=2026-08-18T01:05:41.436Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:05:41.436Z level=INFO msg="server stopped"
 ```
 
 ## Header Matching
@@ -371,8 +371,8 @@ coats:
 
 ```bash
 trenchcoat serve --coats headers.yaml --port 9103 &
-# wait for the listener to accept connections
-until (exec 3<>/dev/tcp/localhost/9103) 2>/dev/null; do sleep 0.1; done
+# wait up to 10s for the listener, failing loudly rather than hanging
+for i in {1..100}; do (exec 3<>/dev/tcp/localhost/9103) 2>/dev/null && break; [ "$i" -eq 100 ] && { echo "timed out waiting for a listener on port 9103" >&2; exit 1; }; sleep 0.1; done
 
 echo "=== With Authorization header ==="
 curl -s -H "Authorization: Bearer my-token" http://localhost:9103/api/v1/secret | jq .
@@ -386,8 +386,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T00:21:42.520Z level=INFO msg="coats loaded" count=2
-time=2026-08-18T00:21:42.520Z level=INFO msg="server started" address=0.0.0.0:9103
+time=2026-08-18T01:05:41.466Z level=INFO msg="coats loaded" count=2
+time=2026-08-18T01:05:41.466Z level=INFO msg="server started" address=0.0.0.0:9103
 === With Authorization header ===
 {
   "secret": "treasure"
@@ -397,8 +397,8 @@ time=2026-08-18T00:21:42.520Z level=INFO msg="server started" address=0.0.0.0:91
 {
   "error": "missing auth"
 }
-time=2026-08-18T00:21:42.642Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T00:21:42.642Z level=INFO msg="server stopped"
+time=2026-08-18T01:05:41.590Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:05:41.590Z level=INFO msg="server stopped"
 ```
 
 ## Validation Errors
@@ -445,16 +445,17 @@ Trenchcoat can act as a proxy, capturing real request/response pairs as coat fil
 ```bash
 mkdir -p captured
 trenchcoat serve --coats basic.yaml --port 9106 &
-# wait for the listener to accept connections
-until (exec 3<>/dev/tcp/localhost/9106) 2>/dev/null; do sleep 0.1; done
+# wait up to 10s for the listener, failing loudly rather than hanging
+for i in {1..100}; do (exec 3<>/dev/tcp/localhost/9106) 2>/dev/null && break; [ "$i" -eq 100 ] && { echo "timed out waiting for a listener on port 9106" >&2; exit 1; }; sleep 0.1; done
 trenchcoat proxy http://localhost:9106 --port 9107 --write-dir captured --pretty-json &
-# wait for the listener to accept connections
-until (exec 3<>/dev/tcp/localhost/9107) 2>/dev/null; do sleep 0.1; done
+# wait up to 10s for the listener, failing loudly rather than hanging
+for i in {1..100}; do (exec 3<>/dev/tcp/localhost/9107) 2>/dev/null && break; [ "$i" -eq 100 ] && { echo "timed out waiting for a listener on port 9107" >&2; exit 1; }; sleep 0.1; done
 curl -s http://localhost:9107/api/v1/users > /dev/null
 curl -s -X POST http://localhost:9107/api/v1/users > /dev/null
 # captures are written asynchronously, and atomically -- a file appears
-# only once it is complete, so its presence is the signal to read it
-until [ -f captured/GET_api_v1_users_200.yaml ] && [ -f captured/POST_api_v1_users_201.yaml ]; do sleep 0.1; done
+# only once it is complete, so its presence is the signal to read it.
+# Bounded at 10s: a change to the capture naming would otherwise hang here
+for i in {1..100}; do [ -f captured/GET_api_v1_users_200.yaml ] && [ -f captured/POST_api_v1_users_201.yaml ] && break; [ "$i" -eq 100 ] && { echo "timed out waiting for the captures; captured/ holds:" >&2; ls captured/ >&2; exit 1; }; sleep 0.1; done
 echo "=== Captured coat files ==="
 ls captured/
 echo ""
@@ -464,9 +465,9 @@ kill %2 %1 2>/dev/null; wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T00:21:42.691Z level=INFO msg="coats loaded" count=2
-time=2026-08-18T00:21:42.692Z level=INFO msg="server started" address=0.0.0.0:9106
-time=2026-08-18T00:21:42.803Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
+time=2026-08-18T01:05:41.640Z level=INFO msg="coats loaded" count=2
+time=2026-08-18T01:05:41.640Z level=INFO msg="server started" address=0.0.0.0:9106
+time=2026-08-18T01:05:41.754Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
 === Captured coat files ===
 GET_api_v1_users_200.yaml
 POST_api_v1_users_201.yaml
@@ -481,7 +482,7 @@ coats:
         code: 200
         headers:
             Content-Type: application/json
-            Date: Tue, 18 Aug 2026 00:21:42 GMT
+            Date: Tue, 18 Aug 2026 01:05:41 GMT
         body: |-
             {
               "users": [
@@ -495,8 +496,8 @@ coats:
                 }
               ]
             }
-time=2026-08-18T00:21:42.940Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T00:21:42.940Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T00:21:42.940Z level=INFO msg="proxy stopped"
-time=2026-08-18T00:21:42.940Z level=INFO msg="server stopped"
+time=2026-08-18T01:05:41.891Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:05:41.891Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:05:41.891Z level=INFO msg="proxy stopped"
+time=2026-08-18T01:05:41.891Z level=INFO msg="server stopped"
 ```

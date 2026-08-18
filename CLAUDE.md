@@ -113,7 +113,14 @@ sleeping a fixed second. Keep it that way: a `sleep` long enough to be reliable
 in CI is dead time on every run, and one short enough to feel fast is a flake.
 Wait on the port with bash's `/dev/tcp` rather than curl — a curl probe against
 the *proxy* forwards a request upstream and captures it, which changes the very
-output the document is recording.
+output the document is recording. Do not use `nc` either: macOS `nc -z` writes
+to stderr, and Showboat records that.
+
+Every wait is bounded at roughly ten seconds and prints what never appeared
+before exiting non-zero. Keep them bounded. Unbounded, the likeliest drift there
+is — a change to the proxy's capture naming, so the file the block waits for is
+never written — turned into a spin that the job-level `timeout-minutes` killed
+ten minutes later with no diff and no diagnostic.
 
 Changing a command *shown* in the demo, rather than its output, is the one case
 the script does not cover: use `uvx showboat@latest extract docs/demo.md` to
