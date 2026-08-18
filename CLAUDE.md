@@ -53,8 +53,10 @@ examples/
   go-tests/               Example test suite using the programmatic API
 scripts/
   coverage-report.sh      On-demand coverage report (backs `make coverage`)
+  regenerate-demo.sh      Rebuilds docs/demo.md against the working tree
 docs/
   demo.md                 CLI demo walkthrough (Showboat-generated)
+  demo-fixtures/          Coat files the demo serves — it cannot run without them
   ROADMAP.md              Future feature plans
 trenchcoat.go             Public API package for Go test integration
 trenchcoat_test.go        Public API tests
@@ -96,7 +98,15 @@ tests enforces that they agree; the `coat-schema-sync.py` hook warns when you
 edit `internal/coat/types.go` or `validate.go` without touching the schema.
 
 `docs/demo.md` is Showboat-generated from real command output. Do not hand-edit
-it — regenerate it, or its output stops being evidence of anything.
+it — every `output` block is only worth something because a command produced it.
+Run `scripts/regenerate-demo.sh` instead, or `--check` to see what has drifted
+without changing the file. The script builds the binary from the working tree,
+copies `docs/demo-fixtures/` into a throwaway directory and runs there, and
+forces `TZ=UTC`; getting any of those wrong records misleading output.
+
+Changing a command *shown* in the demo, rather than its output, is the one case
+the script does not cover: use `showboat extract` to emit the command list, edit
+that, and rebuild from it.
 
 ## Development
 

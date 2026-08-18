@@ -1,0 +1,21 @@
+coats:
+  - name: single-user-glob
+    request:
+      uri: /api/v1/users/*
+    response:
+      code: 200
+      body: '{"match": "glob-single-segment"}'
+
+  - name: nested-glob
+    request:
+      uri: /api/**/comments
+    response:
+      code: 200
+      body: '{"match": "glob-multi-segment"}'
+
+  - name: regex-numeric-id
+    request:
+      uri: ~/api/v1/items/\d+
+    response:
+      code: 200
+      body: '{"match": "regex-numeric"}'

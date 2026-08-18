@@ -1,0 +1,12 @@
+coats:
+  - name: retry-endpoint
+    request:
+      uri: /api/v1/health
+    responses:
+      - code: 503
+        body: '{"status": "unavailable"}'
+      - code: 503
+        body: '{"status": "unavailable"}'
+      - code: 200
+        body: '{"status": "healthy"}'
+    sequence: cycle
