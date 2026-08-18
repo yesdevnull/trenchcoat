@@ -1,7 +1,7 @@
 # Trenchcoat Demo
 
-*2026-08-18T01:05:40Z by Showboat dev*
-<!-- showboat-id: 7918e2b6-b6d5-4fee-88b2-0ed3b6004f3e -->
+*2026-08-18T01:28:55Z by Showboat dev*
+<!-- showboat-id: 2f507c64-ed45-4075-a7e9-03fd4e7df974 -->
 
 Trenchcoat is an extensible mock and proxy-to-mock HTTP server. This demo walks through its key features using the CLI.
 
@@ -157,8 +157,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T01:05:40.982Z level=INFO msg="coats loaded" count=2
-time=2026-08-18T01:05:40.983Z level=INFO msg="server started" address=0.0.0.0:9100
+time=2026-08-18T01:28:55.356Z level=INFO msg="coats loaded" count=2
+time=2026-08-18T01:28:55.358Z level=INFO msg="server started" address=0.0.0.0:9100
 === GET /api/v1/users ===
 {
   "users": [
@@ -185,8 +185,8 @@ time=2026-08-18T01:05:40.983Z level=INFO msg="server started" address=0.0.0.0:91
   "method": "GET",
   "uri": "/unknown"
 }
-time=2026-08-18T01:05:41.109Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T01:05:41.109Z level=INFO msg="server stopped"
+time=2026-08-18T01:28:55.482Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:28:55.482Z level=INFO msg="server stopped"
 ```
 
 ## Glob and Regex URI Matching
@@ -246,8 +246,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T01:05:41.138Z level=INFO msg="coats loaded" count=3
-time=2026-08-18T01:05:41.138Z level=INFO msg="server started" address=0.0.0.0:9101
+time=2026-08-18T01:28:55.511Z level=INFO msg="coats loaded" count=3
+time=2026-08-18T01:28:55.512Z level=INFO msg="server started" address=0.0.0.0:9101
 === Glob: /api/v1/users/42 ===
 {
   "match": "glob-single-segment"
@@ -269,8 +269,8 @@ time=2026-08-18T01:05:41.138Z level=INFO msg="server started" address=0.0.0.0:91
   "method": "GET",
   "uri": "/api/v1/items/abc"
 }
-time=2026-08-18T01:05:41.273Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T01:05:41.273Z level=INFO msg="server stopped"
+time=2026-08-18T01:28:55.648Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:28:55.648Z level=INFO msg="server stopped"
 ```
 
 ## Response Sequences
@@ -321,8 +321,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T01:05:41.301Z level=INFO msg="coats loaded" count=1
-time=2026-08-18T01:05:41.301Z level=INFO msg="server started" address=0.0.0.0:9102
+time=2026-08-18T01:28:55.679Z level=INFO msg="coats loaded" count=1
+time=2026-08-18T01:28:55.679Z level=INFO msg="server started" address=0.0.0.0:9102
 === Request 1 (expect 503) ===
 {"status": "unavailable"}
 HTTP 503
@@ -338,8 +338,8 @@ HTTP 200
 === Request 4 (cycles back to 503) ===
 {"status": "unavailable"}
 HTTP 503
-time=2026-08-18T01:05:41.436Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T01:05:41.436Z level=INFO msg="server stopped"
+time=2026-08-18T01:28:55.811Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:28:55.811Z level=INFO msg="server stopped"
 ```
 
 ## Header Matching
@@ -386,8 +386,8 @@ wait 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T01:05:41.466Z level=INFO msg="coats loaded" count=2
-time=2026-08-18T01:05:41.466Z level=INFO msg="server started" address=0.0.0.0:9103
+time=2026-08-18T01:28:55.839Z level=INFO msg="coats loaded" count=2
+time=2026-08-18T01:28:55.840Z level=INFO msg="server started" address=0.0.0.0:9103
 === With Authorization header ===
 {
   "secret": "treasure"
@@ -397,8 +397,8 @@ time=2026-08-18T01:05:41.466Z level=INFO msg="server started" address=0.0.0.0:91
 {
   "error": "missing auth"
 }
-time=2026-08-18T01:05:41.590Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T01:05:41.590Z level=INFO msg="server stopped"
+time=2026-08-18T01:28:55.962Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:28:55.962Z level=INFO msg="server stopped"
 ```
 
 ## Validation Errors
@@ -461,13 +461,17 @@ ls captured/
 echo ""
 echo "=== Contents of captured GET coat ==="
 cat captured/GET_api_v1_users_200.yaml
-kill %2 %1 2>/dev/null; wait 2>/dev/null
+# Shut the two down one at a time. Killed together, both log their
+# shutdown to the same stdout and the order of the two identical
+# "context canceled" lines against "proxy stopped" is a race.
+kill %2 2>/dev/null; wait %2 2>/dev/null
+kill %1 2>/dev/null; wait %1 2>/dev/null
 ```
 
 ```output
-time=2026-08-18T01:05:41.640Z level=INFO msg="coats loaded" count=2
-time=2026-08-18T01:05:41.640Z level=INFO msg="server started" address=0.0.0.0:9106
-time=2026-08-18T01:05:41.754Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
+time=2026-08-18T01:28:56.016Z level=INFO msg="coats loaded" count=2
+time=2026-08-18T01:28:56.016Z level=INFO msg="server started" address=0.0.0.0:9106
+time=2026-08-18T01:28:56.125Z level=INFO msg="proxy started" address=0.0.0.0:9107 upstream=http://localhost:9106 write_dir=captured filter="" dedupe=overwrite
 === Captured coat files ===
 GET_api_v1_users_200.yaml
 POST_api_v1_users_201.yaml
@@ -482,7 +486,7 @@ coats:
         code: 200
         headers:
             Content-Type: application/json
-            Date: Tue, 18 Aug 2026 01:05:41 GMT
+            Date: Tue, 18 Aug 2026 01:28:56 GMT
         body: |-
             {
               "users": [
@@ -496,8 +500,8 @@ coats:
                 }
               ]
             }
-time=2026-08-18T01:05:41.891Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T01:05:41.891Z level=INFO msg="context canceled, shutting down" reason="context canceled"
-time=2026-08-18T01:05:41.891Z level=INFO msg="proxy stopped"
-time=2026-08-18T01:05:41.891Z level=INFO msg="server stopped"
+time=2026-08-18T01:28:56.257Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:28:56.257Z level=INFO msg="proxy stopped"
+time=2026-08-18T01:28:56.258Z level=INFO msg="context canceled, shutting down" reason="context canceled"
+time=2026-08-18T01:28:56.258Z level=INFO msg="server stopped"
 ```
