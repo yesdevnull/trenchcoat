@@ -99,12 +99,24 @@ TZ=UTC PATH="$work/bin:$PATH" uvx --quiet showboat@latest verify "$DOC" \
 	exit 1
 }
 
-# Ignore everything that necessarily differs between two runs, so what is left
-# is behaviour that actually changed: slog output, the document's own generation
-# stamp and id, and the HTTP Date header recorded inside captured coats. Without
-# that last one --check reports drift on every run and stops meaning anything.
+# Mask everything that necessarily differs between two runs, so what is left is
+# behaviour that actually changed: the timestamp on each slog line, the
+# document's own generation stamp and id, and the HTTP Date header recorded
+# inside captured coats. Without that last one --check reports drift on every
+# run and stops meaning anything.
+#
+# These are substitutions, not deletions. Dropping a whole line exempts
+# everything else on it from the diff, and slog lines are the most volatile
+# thing here and the most worth checking: a `--verbose` log line is a documented
+# CLI surface, and roughly twenty of them are recorded in the document. Deleting
+# them meant renaming a log message registered as no drift at all.
 filter() {
-	grep -vE '^time=|^\*[0-9]{4}-|^<!-- showboat-id:|^[[:space:]]*Date: [A-Z][a-z]{2}, ' "$1"
+	sed -E \
+		-e 's/^time=[^ ]+ /time=<TS> /' \
+		-e 's/^\*[0-9]{4}-.*\*$/*<GENERATED>*/' \
+		-e 's/^<!-- showboat-id:.*/<!-- showboat-id: <ID> -->/' \
+		-e 's/^([[:space:]]*Date: )[A-Z][a-z]{2},.*/\1<DATE>/' \
+		"$1"
 }
 
 if filter "$DOC" | diff -q - <(filter "$work/regenerated.md") >/dev/null; then
