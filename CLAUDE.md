@@ -170,6 +170,15 @@ scripts/coverage-report.sh --min 90     # Functions under 90% covered
 scripts/coverage-report.sh --help       # Full options
 ```
 
+### Checking behaviour
+
+- A stale `~/go/bin/trenchcoat` shadows the working tree, and both it and a
+  fresh build report `version dev` — build to a scratch path and put it first on
+  `PATH` before trusting what you observe.
+- Settle behavioural questions by running the binary against a scratch coat
+  file, not by reading the source: the README has been wrong where the code was
+  not. Ports 9100-9107 belong to the demo — pick others.
+
 ### Claude Code Hooks
 
 `.claude/settings.json` is checked in and registers two `PostToolUse` hooks that
@@ -315,9 +324,12 @@ Tool versions are pinned in the workflow `env` block, each behind a
 reintroduce `@latest` installs — they make a run unreproducible and let an
 upstream release break an unrelated pull request.
 
-`paths-ignore` skips the entire workflow for a docs-only change. That is safe
-only while no job here is a required status check; if branch protection is
-enabled on `main`, drop the filters.
+`paths-ignore` skips the entire workflow, but on a pull request it is evaluated
+against the whole `base..head` diff rather than the latest push — a pull request
+touching any non-docs file runs every time, whatever a later commit changes.
+Only one whose entire diff is docs is skipped. That is safe only while no job
+here is a required status check; if branch protection is enabled on `main`, drop
+the filters.
 
 `.github/workflows/release.yaml` runs GoReleaser on a `v*` tag.
 
