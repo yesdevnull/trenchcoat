@@ -93,6 +93,14 @@ echo "Running tests with the race detector and coverage — this takes a moment.
 if ! go test -count=1 -race -coverprofile="$PROFILE" ./... >"$LOG" 2>&1; then
 	echo "" >&2
 	echo "error: the test suite failed, so the coverage numbers below would be a lie." >&2
+	echo "" >&2
+	# The run is not verbose, so the log is mostly test-emitted slog output. A
+	# noisy failure pushes the verdict clean out of a 20-line tail -- on a real
+	# forced failure the "--- FAIL" line survived by two lines. Pull the failure
+	# lines out first; the tail stays as the context around them.
+	echo "Failures in $LOG:" >&2
+	grep -E '^(--- FAIL|FAIL|panic:)' "$LOG" | head -20 >&2 || true
+	echo "" >&2
 	echo "Last 20 lines of $LOG:" >&2
 	echo "" >&2
 	tail -20 "$LOG" >&2
@@ -112,7 +120,15 @@ echo "-------------------"
 # "\tpkg\t\tcoverage: 0.0% of statements" -- and anchoring on "ok" drops it.
 # Silently omitting the untested packages from a coverage report is the one
 # thing this table must not do.
-grep 'coverage:' "$LOG" | sed -E 's/[[:space:]]+/ /g; s/^ //' | sort
+#
+# A grep that matches nothing exits 1, and under `set -o pipefail` that would
+# end the script here -- no error, no total, no profile path, which is the
+# failure mode this file argues against everywhere else. Unlikely, since a
+# passing `go test ./...` always emits coverage lines, but say so rather than
+# vanish.
+if ! grep 'coverage:' "$LOG" | sed -E 's/[[:space:]]+/ /g; s/^ //' | sort; then
+	echo "warning: no coverage lines in $LOG — the table above is empty" >&2
+fi
 
 echo ""
 total=$(go tool cover -func="$PROFILE" | awk '$1 == "total:" { print $NF }')
