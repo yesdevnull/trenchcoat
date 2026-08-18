@@ -1,0 +1,84 @@
+name: Demo Drift
+
+# docs/demo.md records the real output of every command it shows. This workflow
+# re-runs every block against a build of the checkout and fails when the
+# recorded output no longer matches, so a behaviour change cannot quietly leave
+# the demo advertising the old one -- which is how it came to show a captured
+# coat shape the proxy had stopped producing, for five months.
+#
+# This lives outside ci.yaml because ci.yaml uses paths-ignore, which skips the
+# whole workflow, jobs included. docs/** and **.md are ignored there, so a pull
+# request that hand-edits docs/demo.md or a fixture under docs/demo-fixtures/
+# ran no CI at all -- the drift check was off for precisely the changes it
+# exists to catch. paths-ignore cannot be negated, so the job moved here and
+# uses paths instead: an allow-list of everything a rerun of the demo can
+# depend on.
+#
+# Keep the list in step with the script: it builds ./cmd/trenchcoat with the
+# module's dependencies, runs the blocks in docs/demo.md, and serves the coats
+# in docs/demo-fixtures/. The list is written out twice rather than shared by a
+# YAML anchor, because GitHub Actions is not documented to support anchors and
+# a silently mis-parsed trigger is the failure this workflow exists to avoid.
+on:
+  pull_request:
+    paths:
+      - "docs/demo.md"
+      - "docs/demo-fixtures/**"
+      - "cmd/**"
+      - "internal/**"
+      - "scripts/regenerate-demo.sh"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/demo.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/demo.md"
+      - "docs/demo-fixtures/**"
+      - "cmd/**"
+      - "internal/**"
+      - "scripts/regenerate-demo.sh"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/demo.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  demo:
+    name: Demo Drift
+    runs-on: ubuntu-latest
+    # The demo starts servers and waits for their listeners rather than sleeping,
+    # so it finishes in seconds. The cap is here so a listener that never comes
+    # up fails the job instead of holding a runner for six hours.
+    #
+    # Deliberate, and the reason no secret may ever be added to this workflow:
+    # `showboat verify` executes every ```bash block in docs/demo.md, and on a
+    # pull_request event the checkout is the contributor's head commit. So this
+    # job runs shell authored in the pull request. That is acceptable only
+    # because the event is pull_request rather than pull_request_target, the
+    # token is contents: read, and nothing here reads a secret. Adding a secret,
+    # widening permissions, or switching to pull_request_target would turn a
+    # drift check into arbitrary code execution with credentials -- do none of
+    # those while this job runs PR-authored shell.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # scripts/regenerate-demo.sh runs Showboat as `uvx showboat@latest`, so uv
+      # is the only thing to install; jq and curl are already on the runner.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Check the demo for drift
+        run: scripts/regenerate-demo.sh --check

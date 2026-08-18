@@ -9,18 +9,23 @@ name: CI
 # required check that never runs leaves the pull request permanently pending.
 # If branch protection is ever turned on, drop these filters rather than trying
 # to make a skipped job report success.
+#
+# examples/** is deliberately not ignored: examples/go-tests is a real Go test
+# package that `go test ./...` compiles and runs, so a pull request touching
+# only it must still run the Test job.
+#
+# The Demo Drift check is a separate workflow, demo.yaml, because it has to run
+# for the docs/** edits this filter skips. paths-ignore cannot be negated.
 on:
   pull_request:
     paths-ignore:
       - "docs/**"
-      - "examples/**"
       - "**.md"
   push:
     branches:
       - main
     paths-ignore:
       - "docs/**"
-      - "examples/**"
       - "**.md"
 
 permissions:
@@ -178,33 +183,6 @@ jobs:
       - name: Run hook tests
         run: python3 .claude/hooks/test_hooks.py
 
-  demo:
-    name: Demo Drift
-    runs-on: ubuntu-latest
-    # The demo starts servers and waits for their listeners rather than sleeping,
-    # so it finishes in seconds. The cap is here so a listener that never comes
-    # up fails the job instead of holding a runner for six hours.
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-
-      # scripts/regenerate-demo.sh runs Showboat as `uvx showboat@latest`, so uv
-      # is the only thing to install; jq is already on the runner.
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-
-      # docs/demo.md records the real output of every command it shows. This
-      # fails when the recorded output no longer matches what the code does, so
-      # a behaviour change cannot quietly leave the demo advertising the old one
-      # -- which is how it came to show a captured coat shape the proxy had
-      # stopped producing, for five months.
-      - name: Check the demo for drift
-        run: scripts/regenerate-demo.sh --check
-
   goreleaser-config:
     name: GoReleaser Config
     runs-on: ubuntu-latest
@@ -221,7 +199,9 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, lint, vet, format, hooks, demo, goreleaser-config]
+    # Demo Drift is not here: it lives in demo.yaml, and Actions has no
+    # cross-workflow `needs`. It gates on its own, as a separate check.
+    needs: [test, lint, vet, format, hooks, goreleaser-config]
     strategy:
       matrix:
         goos: [linux, darwin, windows]
