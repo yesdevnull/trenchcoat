@@ -370,7 +370,10 @@ no job here is a required status check; if branch protection is enabled on
 `main`, drop the filters. `examples/**` is not ignored: `examples/go-tests` is a
 real test package that `go test ./...` runs.
 
-`.github/workflows/release.yaml` runs GoReleaser on a `v*` tag.
+`.github/workflows/release.yaml` runs the test suite on a `v*` tag and then
+GoReleaser, which needs it. The gate lives there because `ci.yaml` does not
+trigger on tags and GoReleaser compiles without testing — otherwise tagging a
+broken commit publishes binaries nobody verified.
 
 ## Pre-commit Requirements
 
