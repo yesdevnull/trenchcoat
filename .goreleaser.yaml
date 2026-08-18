@@ -36,3 +36,12 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+
+release:
+  # GoReleaser defaults this to false, so without it a tag like v1.0.0-alpha.1
+  # publishes as an ordinary release and takes GitHub's "Latest" badge — an
+  # alpha handed to everyone who lands on the repository as the current stable
+  # version. The workflow reports success either way, so nothing catches it.
+  # "auto" reads the semver prerelease suffix and marks -alpha, -beta and -rc
+  # accordingly.
+  prerelease: auto
