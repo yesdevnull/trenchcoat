@@ -42,8 +42,11 @@ release:
   # publishes as an ordinary release and takes GitHub's "Latest" badge — an
   # alpha handed to everyone who lands on the repository as the current stable
   # version. The workflow reports success either way, so nothing catches it.
-  # "auto" reads the semver prerelease suffix and marks -alpha, -beta and -rc
-  # accordingly.
+  # "auto" marks the release as a prerelease when the tag carries a prerelease
+  # indicator — v1.0.0-alpha.1, v1.0.0-rc1 and so on. GoReleaser documents the
+  # rule only as "in case there is an indicator for this in the tag", without
+  # saying what counts, so an unusual suffix is worth checking on the release
+  # itself rather than assuming.
   prerelease: auto
 
   # Publish as a draft and let the workflow flip it live once every archive is
