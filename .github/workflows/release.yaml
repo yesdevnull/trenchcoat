@@ -62,3 +62,18 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # .goreleaser.yaml builds the release as a draft so every archive is
+      # attached before anyone can see it. Publishing is the separate step,
+      # because with release immutability enabled a published release has its
+      # assets and its git tag locked — an upload arriving afterwards has
+      # nothing to attach to.
+      #
+      # If this step fails the draft survives, holding every artefact, and can
+      # be published by hand. That is the outcome worth having: an unpublished
+      # complete release rather than a published incomplete one.
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false
