@@ -83,6 +83,27 @@ func TestAlwaysCalled(t *testing.T) {
 }
 """
 
+# The failure comes first and forty lines of chatter follow it, the way a real
+# suite's slog output does. Anything that only shows the tail of the log loses
+# the verdict entirely.
+NOISY_FAILING_TEST_GO = """package tiny
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestAlwaysCalled(t *testing.T) {
+	t.Fatal("deliberately failing so the script has something to report")
+}
+
+func TestNoisy(t *testing.T) {
+	for i := 0; i < 40; i++ {
+		fmt.Printf("level=INFO msg=\\"chatter\\" line=%d\\n", i)
+	}
+}
+"""
+
 
 class CoverageReportArgumentsTest(unittest.TestCase):
     """Argument validation, which happens before the script touches anything.
@@ -152,6 +173,15 @@ class CoverageReportRunTest(unittest.TestCase):
         self.assertIn("the test suite failed", result.stderr)
         self.assertIn("coverage-test.log", result.stderr)
         self.assertNotIn("Total:", result.stdout)
+
+    def test_names_the_failing_test_under_a_pile_of_output(self):
+        """A noisy failure must not push the verdict out of the report."""
+        (self.repo / "tiny_test.go").write_text(NOISY_FAILING_TEST_GO)
+
+        result = run(self.script())
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("--- FAIL: TestAlwaysCalled", result.stderr)
 
 
 FAKE_TRENCHCOAT_GO = """package main
