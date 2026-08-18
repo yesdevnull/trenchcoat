@@ -78,6 +78,18 @@ jobs:
 
       # scripts/regenerate-demo.sh runs Showboat as `uvx showboat@latest`, so uv
       # is the only thing to install; jq and curl are already on the runner.
+      #
+      # `@latest` is a deliberate exception to the pinning policy in ci.yaml.
+      # Showboat generates a document; it is not a correctness gate on the code,
+      # and a contributor running the script locally gets whatever uvx resolves
+      # regardless, so pinning here would only make CI disagree with them. The
+      # accepted consequence: a Showboat release that changes block ordering or
+      # whitespace shows up as drift in this job, pointing at code nobody
+      # touched. The generation stamp and document id are masked by the script's
+      # filter, so a version bump alone does not do it. If it happens, regenerate
+      # the document -- or pin the version here and in CLAUDE.md. Because this
+      # workflow no longer gates Build, such a failure costs one check rather
+      # than the whole pull request.
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Check the demo for drift

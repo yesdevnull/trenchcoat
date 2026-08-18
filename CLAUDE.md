@@ -329,10 +329,21 @@ skips — and `paths-ignore` cannot be negated, so `demo.yaml` uses `paths` with
 an allow-list instead. Actions has no cross-workflow `needs`, so **Build** no
 longer waits on it; Demo Drift gates as its own check.
 
-Tool versions are pinned in the workflow `env` block, each behind a
+Tool versions are pinned in `ci.yaml`'s `env` block, each behind a
 `# renovate:` annotation that a customManager in `renovate.json` reads. Do not
 reintroduce `@latest` installs — they make a run unreproducible and let an
 upstream release break an unrelated pull request.
+
+Showboat is the one stated exception: `scripts/regenerate-demo.sh` runs
+`uvx showboat@latest`. It generates a document rather than gating the code's
+correctness, and a contributor running the script locally gets whatever `uvx`
+resolves anyway, so pinning it in CI would only make CI disagree with them. The
+accepted cost is that a Showboat release changing block ordering or whitespace
+surfaces as drift in the Demo Drift job, pointing at code nobody touched — the
+generation stamp and document id are masked, so a version bump alone will not do
+it. The fix then is to regenerate the document, or to pin the version in
+`demo.yaml` and say so here. Demo Drift does not gate Build, so that failure
+costs one check rather than the pull request.
 
 `ci.yaml`'s `paths-ignore` skips the entire workflow, but on a pull request it is
 evaluated against the whole `base..head` diff rather than the latest push — a
