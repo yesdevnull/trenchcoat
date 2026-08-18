@@ -42,7 +42,7 @@ def require(tool: str) -> None:
         raise unittest.SkipTest("%s is not on PATH" % tool)
 
 
-def run(script: Path, *args: str, env: dict = None):
+def run(script: Path, *args: str, env: dict | None = None):
     return subprocess.run(
         [str(script), *args], capture_output=True, text=True, env=env
     )
@@ -294,7 +294,13 @@ class RegenerateDemoTest(unittest.TestCase):
         bin_dir = self.repo / "minimal-path"
         bin_dir.mkdir()
         for tool in ("bash", "uv"):
-            (bin_dir / tool).symlink_to(shutil.which(tool))
+            # require() first: shutil.which returns None for a missing tool, and
+            # symlink_to(None) raises a TypeError that reads like a bug in the
+            # test rather than a missing prerequisite.
+            require(tool)
+            resolved = shutil.which(tool)
+            assert resolved is not None  # require() has already skipped if absent
+            (bin_dir / tool).symlink_to(resolved)
         env = dict(os.environ)
         env["PATH"] = str(bin_dir)
 
