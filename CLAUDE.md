@@ -252,7 +252,8 @@ follows is what the README does not say.
 | Constant | Value | Governs |
 |---|---|---|
 | `matcher.maxBodyMatchSize` | 1 MiB | Request body read for `request.body` matching. A larger body never matches a body-constrained coat, but is still restored in full for downstream handlers. |
-| `server.maxRecordBodySize` | 1 MiB | Request body recorded for assertions and exposed to templates as `.Body`. Truncated with a marker. |
+| `server.maxRecordBodySize` | 1 MiB | Request body recorded for assertions. Over it, the record holds the first 1 MiB plus a `...(truncated)` marker. |
+| `server.maxRecordBodySize` | 1 MiB | Request body exposed to a response template as `.Body`. Over it, the template sees the first 1 MiB and **no marker** — the same constant, but truncation here is silent and undetectable from inside the template. |
 | `proxy.maxBodySize` | 10 MiB | Request and response bodies through the proxy. Over it, the request is 413 and the response 502. |
 | `coat.MaxDelayMs` | 60000 | `delay_ms` + `delay_jitter_ms` combined, rejected at validation. |
 
