@@ -48,7 +48,7 @@ env:
   # renovate: datasource=go depName=golang.org/x/tools
   GOIMPORTS_VERSION: "v0.49.0"
   # renovate: datasource=github-releases depName=golangci/golangci-lint
-  GOLANGCI_LINT_VERSION: "v2.12.2"
+  GOLANGCI_LINT_VERSION: "v2.13.1"
 
 jobs:
   test:
