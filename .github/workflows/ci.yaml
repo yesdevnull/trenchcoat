@@ -44,7 +44,7 @@ concurrency:
 # reads the annotation comment above each one.
 env:
   # renovate: datasource=go depName=golang.org/x/vuln
-  GOVULNCHECK_VERSION: "v1.7.0"
+  GOVULNCHECK_VERSION: "v1.8.0"
   # renovate: datasource=go depName=golang.org/x/tools
   GOIMPORTS_VERSION: "v0.49.0"
   # renovate: datasource=github-releases depName=golangci/golangci-lint
