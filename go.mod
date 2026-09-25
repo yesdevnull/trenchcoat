@@ -2,7 +2,7 @@ module github.com/yesdevnull/trenchcoat
 
 go 1.25
 
-toolchain go1.25.13
+toolchain go1.25.14
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
