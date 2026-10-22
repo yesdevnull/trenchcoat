@@ -72,7 +72,7 @@ jobs:
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
           path: |
@@ -173,14 +173,14 @@ jobs:
       # 3.9 is the floor the hooks and the script tests are written against,
       # because macOS ships 3.9.6 as /usr/bin/python3. Testing on a newer
       # interpreter would let a 3.10+ construct through.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       # scripts/test_scripts.py drives regenerate-demo.sh, which runs Showboat
       # as `uvx showboat@latest`. Without uv that test would skip rather than
       # fail, which is the wrong answer in CI.
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Install goimports
         run: go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
@@ -199,7 +199,7 @@ jobs:
 
       # Catches deprecated configuration before a tag is pushed, when the only
       # way to find out is a failed release.
-      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: "~> v2"
           args: check
@@ -245,7 +245,7 @@ jobs:
             ./cmd/trenchcoat/
 
       - name: Upload binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }}
           path: trenchcoat-${{ matrix.goos }}-${{ matrix.goarch }}*
